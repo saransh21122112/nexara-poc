@@ -18,6 +18,8 @@ services:
           property: connectionString
       - key: FACTORY_PASSWORD
         generateValue: true          # random; read it in the Render dashboard -> Environment
+      - key: CLAUDE_CODE_OAUTH_TOKEN
+        sync: false                  # TESTING ONLY: lets the factory use your Claude subscription (never commit this value)
       - key: ANTHROPIC_API_KEY
         sync: false                  # you paste this in the dashboard; customer API calls need it (or OPENAI_API_KEY)
 
