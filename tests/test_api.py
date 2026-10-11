@@ -7,7 +7,7 @@ REQ = dict(company_name="Acme", industry="Retail", agent_type="Skill", business_
            contact_email="ops@acme.example", github_username="acme-dev", claude_status="have_claude_account")
 SPEC = dict(agent_name="Sales Analyst", purpose="Analyse sales", business_problem="Slow analysis",
             instructions="You analyse sales data accurately using the tools provided.", capabilities=["analyse"],
-            input_schema={"type": "object"}, output_schema={"type": "object"}, required_tools=["calculator", "lookup_business_data"],
+            input_schema={"type": "object"}, output_schema={"type": "object"}, required_tools=["calculator"],
             data_sources=["sales"], safety_restrictions=["Never invent numbers"],
             test_scenarios=[dict(name="t1", task="Total units sold?", expected_behavior="uses tools", must_contain=["1"])],
             success_criteria=["accurate"])

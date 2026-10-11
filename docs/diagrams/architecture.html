@@ -1,0 +1,183 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Nexara AI POC: architecture and flows</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;max-width:1100px;margin:0 auto;padding:24px;color:#26181a;background:#fbf8f1}h1{color:#4a1019}h2{color:#6b1d2a;border-bottom:2px solid #c9a227;padding-bottom:4px;margin-top:40px}
+section{background:#fff;border:1px solid #e4d9c3;border-radius:12px;padding:8px 20px 20px;margin:20px 0;overflow-x:auto}.mermaid{background:none}</style></head><body>
+<h1>Nexara AI POC: architecture and flows</h1><p>Generated from <code>docs/architecture.md</code> and <code>docs/flows.md</code> by <code>scripts/build_diagrams.py</code>. Do not edit by hand.</p>
+<section><h2>System context</h2><pre class="mermaid">flowchart LR
+  visitor([Visitor / customer])
+  staff([Nexara staff])
+  subgraph nexara[Nexara web service]
+    pub[Public site&lt;br/&gt;pages, request form, tracker, contact]
+    fac[Staff dashboard /factory]
+    api[JSON API /api]
+  end
+  db[(SQL database&lt;br/&gt;SQLite locally, Postgres on Render)]
+  ai[[AI model provider&lt;br/&gt;switchable]]
+  gh[[GitHub&lt;br/&gt;private repo per customer]]
+  mail[[Email service&lt;br/&gt;optional SMTP]]
+  cc([Customer&#x27;s Claude Code])
+  visitor --&gt; pub --&gt; api
+  staff --&gt; fac --&gt; api
+  api --&gt; db
+  api --&gt; ai
+  api --&gt; gh
+  api -.-&gt; mail
+  gh --&gt;|clone / marketplace install / updates| cc
+</pre></section><section><h2>Components</h2><pre class="mermaid">flowchart TB
+  subgraph web[frontend: no build step]
+    L[layout.html + pages/*.html&lt;br/&gt;server-rendered by pages.py]
+    J[js: site, request, assist, track, contact, factory, live, changes, extras]
+    C[css: base tokens, site, factory]
+  end
+  subgraph be[backend]
+    M[main.py&lt;br/&gt;routes, auth, rate limits, CSP]
+    PG[pages.py]
+    AS[agent_service.py&lt;br/&gt;generate spec, revise, generate tests, evaluate, assist]
+    BS[build_service.py&lt;br/&gt;live build pipeline]
+    DS[delivery_service.py&lt;br/&gt;deliver, propose change, diff, refresh]
+    RG[repo_gen.py + repo_templates.py&lt;br/&gt;plugin repo files]
+    GC[github_client.py]
+    PR[providers.py + subscription.py&lt;br/&gt;model switch]
+    VF[verification.py + mailer.py]
+    DB[database.py&lt;br/&gt;portability layer + all tables]
+    TL[tools.py&lt;br/&gt;calculator for test runs]
+  end
+  web --&gt; M
+  M --&gt; PG
+  M --&gt; AS --&gt; PR
+  M --&gt; BS --&gt; AS
+  BS --&gt; RG
+  M --&gt; DS --&gt; RG
+  DS --&gt; GC
+  M --&gt; VF
+  AS --&gt; TL
+  M &amp; AS &amp; BS &amp; DS &amp; VF --&gt; DB
+</pre></section><section><h2>Data model</h2><pre class="mermaid">erDiagram
+  requests ||--o{ agents : &quot;spec generated from&quot;
+  requests ||--o{ build_events : &quot;live build log&quot;
+  requests ||--o{ email_verifications : &quot;proves email&quot;
+  customers ||--o{ requests : &quot;owns (customer_id inside data)&quot;
+  customers ||--o| repos : &quot;one private repo&quot;
+  customers ||--o{ repo_events : &quot;timeline&quot;
+  repos ||--o{ repo_agents : &quot;contains&quot;
+  agents ||--o{ repo_agents : &quot;delivered as&quot;
+  repos ||--o{ repo_changes : &quot;dev branch + PR&quot;
+  agents ||--o{ runs : &quot;test and run logs&quot;
+  agents ||--o{ eval_runs : &quot;evaluations&quot;
+  requests { text id PK  text created_at  text data &quot;form fields as JSON&quot; }
+  agents { text id PK  text request_id FK  text provider  text model  text spec &quot;JSON spec&quot; }
+  customers { text id PK  text slug UK  text company_name  text contact_email  text github_username }
+  repos { text id PK  text customer_id FK  text owner  text name  text state  text invite_status  text head_sha  text files &quot;hashes of managed files&quot; }
+  repo_agents { text id PK  text repo_id FK  text agent_id FK  text plugin_slug  text spec_hash }
+  repo_changes { text id PK  text repo_id FK  int pr_number  text state &quot;open merged closed&quot;  text files  text agents }
+  repo_events { text id PK  text customer_id FK  text kind  text detail }
+  build_events { text id PK  text request_id FK  int seq  text stage  text state  text detail }
+  email_verifications { text id PK  text request_id FK  text token_hash UK  text expires_at  text used_at }
+  contact_messages { text id PK  text name  text email  text topic  text message  int read }
+  runs { text id PK  text agent_id FK  text kind  text task  text status  text response }
+  eval_runs { text id PK  text agent_id FK  float pass_rate  text results }
+</pre></section><section><h2>Deployment</h2><pre class="mermaid">flowchart LR
+  dev[Developer] --&gt;|PR to dev, then release PR to main| repo[(GitHub: nexara-poc)]
+  repo --&gt;|auto-deploy main| render[Render web service&lt;br/&gt;Docker image, non-root]
+  render --&gt; pg[(Render Postgres)]
+  render --&gt; gh[GitHub API&lt;br/&gt;customer repos]
+  render --&gt; ai[[AI provider]]
+  render -.-&gt; smtp[[SMTP]]
+  user([Visitors and staff]) --&gt; render
+</pre></section><section><h2>1. From a visitor&#x27;s idea to a delivered plugin</h2><pre class="mermaid">sequenceDiagram
+  autonumber
+  actor V as Visitor
+  participant S as Public site
+  participant A as API
+  participant AI as AI model
+  participant DB as Database
+  actor T as Staff
+  participant GH as GitHub
+  V-&gt;&gt;S: describe the need (assistant optional)
+  S-&gt;&gt;A: POST /api/requests/assist
+  A-&gt;&gt;AI: fill or edit form boxes (data only, rate-limited)
+  AI--&gt;&gt;S: suggested box values (human reviews)
+  V-&gt;&gt;S: submit form
+  S-&gt;&gt;A: POST /api/requests
+  A-&gt;&gt;DB: store request + customer match
+  opt email verification on
+    A--&gt;&gt;V: confirmation email, link with token in the URL fragment
+    V-&gt;&gt;A: POST /api/verify (click)
+  end
+  V-&gt;&gt;S: /track?id=REQ-... (public progress)
+  T-&gt;&gt;A: Build and watch (POST /api/requests/id/build)
+  A-&gt;&gt;AI: write the specification
+  A-&gt;&gt;AI: run its test scenarios (each carries inline input)
+  A-&gt;&gt;DB: build_events at every step
+  T-&gt;&gt;A: Deliver (confirm=true)
+  A-&gt;&gt;GH: create private repo, commit plugin files, invite customer
+  A-&gt;&gt;DB: repos, repo_agents, repo_events
+  V-&gt;&gt;GH: accept invite, install with one command
+</pre></section><section><h2>2. Changing something already delivered (dev branch + pull request)</h2><pre class="mermaid">flowchart TD
+  A[Staff: Change on an agent] --&gt; B[Describe the change in plain words]
+  B --&gt; C[AI proposes an updated spec&lt;br/&gt;POST /agents/id/revise]
+  C --&gt; D{Review the spec diff}
+  D --&gt;|save| E[Spec updated, agent marked behind]
+  E --&gt; F[Review files&lt;br/&gt;GET /customers/id/diff]
+  F --&gt; G[Open pull request&lt;br/&gt;POST /customers/id/sync with confirm]
+  G --&gt; H[One Nexara commit on top of main -&gt; branch dev]
+  H --&gt; I[Pull request dev to main opened or updated]
+  I --&gt; J{Person merges on GitHub}
+  J --&gt;|merged| K[Refresh from GitHub: record merge,&lt;br/&gt;agents now up to date]
+  J --&gt;|closed| L[Stays behind, can propose again]
+  H -. dev has foreign commits .-&gt; X[Refused unless overwrite_dev]
+  G -. hand edits on main .-&gt; Y[Conflict: confirm overwrite]
+</pre></section><section><h2>3. Live build pipeline</h2><pre class="mermaid">stateDiagram-v2
+  [*] --&gt; received
+  received --&gt; analyse
+  analyse --&gt; specify: model writes the spec
+  specify --&gt; test: scenarios run one by one
+  test --&gt; package: all checks passed
+  package --&gt; ready: files listed, nothing pushed
+  specify --&gt; failed: model or config error
+  test --&gt; failed: a check failed
+  received --&gt; interrupted: server restarted
+  specify --&gt; interrupted: server restarted
+  test --&gt; interrupted: server restarted
+  ready --&gt; [*]
+  failed --&gt; received: Build again
+  interrupted --&gt; received: Build again
+</pre></section><section><h2>4. Customer repository and invitation states</h2><pre class="mermaid">stateDiagram-v2
+  [*] --&gt; created: first delivery creates main directly
+  created --&gt; ready: files committed
+  ready --&gt; needs_retry: a push or invite failed
+  needs_retry --&gt; ready: retry continues, no duplicate repo
+  state invite {
+    [*] --&gt; none
+    none --&gt; pending: invite sent
+    pending --&gt; accepted: customer accepts
+    pending --&gt; expired: 7 days pass
+    expired --&gt; pending: re-invite
+  }
+</pre></section><section><h2>5. Pull-request change record</h2><pre class="mermaid">stateDiagram-v2
+  [*] --&gt; open: PR opened from dev
+  open --&gt; open: proposal updated, same PR
+  open --&gt; merged: refresh sees the merge, hashes recorded
+  open --&gt; closed: closed without merging
+  closed --&gt; [*]
+  merged --&gt; [*]
+</pre></section><section><h2>6. Public contact form</h2><pre class="mermaid">sequenceDiagram
+  participant B as Browser
+  participant A as API
+  participant DB as Database
+  B-&gt;&gt;A: GET /api/contact/ticket (signed, timestamped)
+  B-&gt;&gt;A: POST /api/contact (fields + ticket + honeypot)
+  alt honeypot filled or sent in under 2 seconds
+    A--&gt;&gt;B: 201 ok (nothing stored, bot learns nothing)
+  else bad or old ticket
+    A--&gt;&gt;B: 400 reload the page
+  else over rate limit
+    A--&gt;&gt;B: 429
+  else valid
+    A-&gt;&gt;DB: store message
+    A--&gt;&gt;B: 201 ok (operator emailed only if SMTP is configured)
+  end
+</pre></section>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({startOnLoad:true,theme:'base',themeVariables:{primaryColor:'#f6ecc9',primaryBorderColor:'#c9a227',primaryTextColor:'#26181a',lineColor:'#6b1d2a',secondaryColor:'#f7e9ec',tertiaryColor:'#fff'},securityLevel:'strict'});</script>
+</body></html>

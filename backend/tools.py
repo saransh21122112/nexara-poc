@@ -1,10 +1,8 @@
-"""Two controlled tools. Only these are ever executed; args are validated server-side."""
+"""Controlled tools for the factory test runs. Only these are ever executed; args are validated server-side.
+There is deliberately no sample-data tool: agents work on the customer's own data, and test inputs are written inline."""
 import ast
-import json
 import operator
-from pathlib import Path
 
-DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "sample_business_data.json"
 _BIN = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
         ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: operator.pow}
 _UN = {ast.USub: operator.neg, ast.UAdd: operator.pos}
@@ -45,24 +43,6 @@ def calculator(expression: str) -> dict:
     return {"expression": expression, "result": _eval(tree.body)}
 
 
-DATASETS = ("sales", "customers", "orders")
-
-
-def lookup_business_data(dataset: str, field: str | None = None, value: str | None = None, limit: int = 10) -> dict:
-    if dataset not in DATASETS:
-        raise ToolError(f"dataset must be one of {list(DATASETS)}")
-    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 50:
-        raise ToolError("limit must be an integer 1-50")
-    rows = json.loads(DATA_FILE.read_text())[dataset]
-    if field is not None:
-        if field not in rows[0]:
-            raise ToolError(f"unknown field '{field}' for {dataset}; valid: {list(rows[0])}")
-        if value is None:
-            raise ToolError("value is required when field is given")
-        rows = [r for r in rows if str(r[field]).lower() == str(value).lower()]
-    return {"dataset": dataset, "count": len(rows[:limit]), "records": rows[:limit]}
-
-
 # name -> (description, JSON schema, handler)
 REGISTRY = {
     "calculator": (
@@ -70,17 +50,6 @@ REGISTRY = {
         {"type": "object", "properties": {"expression": {"type": "string", "description": "e.g. '120*49.5 + 80*49.5'"}},
          "required": ["expression"]},
         calculator),
-    "lookup_business_data": (
-        "Look up records in the sample business dataset. Optionally filter by field=value (exact, case-insensitive). "
-        "Fields: sales(id, product, region, units, unit_price, month); customers(id, name, tier, region, email); "
-        "orders(id, customer_id, status, eta, item, total). Order ids look like 'ORD-1001'.",
-        {"type": "object", "properties": {
-            "dataset": {"type": "string", "enum": list(DATASETS)},
-            "field": {"type": "string", "description": "optional column to filter on"},
-            "value": {"type": "string", "description": "value the field must equal"},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 50}},
-         "required": ["dataset"]},
-        lookup_business_data),
 }
 
 

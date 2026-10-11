@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS repo_events (id TEXT PRIMARY KEY, customer_id TEXT RE
   at TEXT, kind TEXT, detail TEXT);
 CREATE TABLE IF NOT EXISTS repo_changes (id TEXT PRIMARY KEY, repo_id TEXT REFERENCES repos(id), branch TEXT, pr_number INTEGER,
   pr_url TEXT, state TEXT, title TEXT, summary TEXT, commit_sha TEXT, files TEXT, agents TEXT, created_at TEXT, updated_at TEXT, merged_at TEXT);
+CREATE TABLE IF NOT EXISTS contact_messages (id TEXT PRIMARY KEY, created_at TEXT, name TEXT, email TEXT, topic TEXT, message TEXT, read INTEGER);
 CREATE TABLE IF NOT EXISTS build_events (id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id), seq INTEGER, at TEXT,
   stage TEXT, state TEXT, title TEXT, detail TEXT)
 """
@@ -570,3 +571,30 @@ def update_change(cid: str, **fields) -> dict:
     with db() as c:
         c.execute(f"UPDATE repo_changes SET {', '.join(k + '=?' for k in fields)}, updated_at=? WHERE id=?", (*vals, now(), cid))
     return get_change(cid)
+
+
+# ------------------------------------------------------------------ contact messages (public form, read in the factory)
+def add_message(name: str, email: str, topic: str, message: str) -> dict:
+    mid = new_id("MSG")
+    with db() as c:
+        c.execute("INSERT INTO contact_messages VALUES (?,?,?,?,?,?,?)", (mid, now(), name, email, topic, message, 0))
+    return {"id": mid}
+
+
+def list_messages(limit: int = 200) -> list[dict]:
+    with db() as c:
+        rows = c.execute("SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    return [{**dict(r), "read": bool(r["read"])} for r in rows]
+
+
+def count_messages_since(iso: str) -> int:
+    with db() as c:
+        return c.execute("SELECT COUNT(*) FROM contact_messages WHERE created_at>=?", (iso,)).fetchone()[0]
+
+
+def mark_message_read(mid: str) -> bool:
+    with db() as c:
+        if not c.execute("SELECT 1 FROM contact_messages WHERE id=?", (mid,)).fetchone():
+            return False
+        c.execute("UPDATE contact_messages SET read=1 WHERE id=?", (mid,))
+    return True

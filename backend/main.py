@@ -1,4 +1,5 @@
 import collections
+import hmac
 import os
 import secrets
 import time
@@ -10,13 +11,14 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response  # noqa: E402
-from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from . import agent_service, build_service, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
+from . import agent_service, build_service, pages, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
 from .github_client import GitHubClient, GitHubError, NotConfigured as GitHubNotConfigured  # noqa: E402
-from .models import (AGENT_TYPES, AgentSpec, AssistIn, AttachIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
-                     ManualVerifyIn, ProviderIn, RequestIn, ReviseIn, RunIn, SyncIn, VerifyIn)
+from .models import (AGENT_TYPES, AgentSpec, AssistIn, AttachIn, ContactIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
+                     GenerateTestsIn, ManualVerifyIn, ProviderIn, RequestIn, ReviseIn, RunIn, SyncIn, VerifyIn)
 from .providers import NotConfigured, UpstreamError  # noqa: E402
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
@@ -114,12 +116,17 @@ def _agent_or_404(aid: str) -> dict:
     return a
 
 
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; "
+       "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+
+
 @app.middleware("http")
 async def no_cache_static(request, call_next):
     resp = await call_next(request)
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"  # the factory login must not be framed (clickjacking)
     resp.headers["Referrer-Policy"] = "same-origin"
+    resp.headers["Content-Security-Policy"] = CSP
     if not request.url.path.startswith("/api"):
         resp.headers["Cache-Control"] = "no-cache"  # POC: always revalidate so edits show immediately
     return resp
@@ -177,10 +184,84 @@ async def assist_request(body: AssistIn, request: Request):
         raise HTTPException(502, str(e))
 
 
+_CONTACT_KEY = secrets.token_bytes(32)    # random per process and unrelated to any password: tickets are public, so the key must not be guessable
+
+
+def _ticket_secret() -> bytes:
+    # A restart invalidates open forms; the visitor is told to reload. Set CONTACT_SECRET (>= 32 random chars) if you run several workers.
+    return os.environ.get("CONTACT_SECRET", "").encode() or _CONTACT_KEY
+
+
+def _sign(ts: int) -> str:
+    return f"{ts}.{hmac.new(_ticket_secret(), str(ts).encode(), 'sha256').hexdigest()[:32]}"
+
+
+def _ticket_age(ticket: str) -> int | None:
+    """Seconds since the ticket was issued, or None if it is forged, malformed or older than a day."""
+    try:
+        ts = int(ticket.split(".")[0])
+    except (ValueError, IndexError):
+        return None
+    if not hmac.compare_digest(_sign(ts), ticket) or not 0 <= time.time() - ts <= 86400:
+        return None
+    return int(time.time() - ts)
+
+
+@app.get("/api/contact/ticket")
+def contact_ticket(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return {"ticket": _sign(int(time.time()))}
+
+
+@app.post("/api/contact", status_code=201)
+def contact(body: ContactIn, request: Request):
+    """Public. Honeypot and too-fast posts get the same success as a real one (a bot learns nothing); a bad ticket is told to reload."""
+    limit("contact", client_ip(request), int(os.environ.get("CONTACT_PER_HOUR_PER_IP", "5")), 3600, "messages from this address")
+    age = _ticket_age(body.ticket)
+    if age is None:
+        raise HTTPException(400, "This form expired. Please reload the page and send your message again.")
+    if body.website.strip() or age < int(os.environ.get("CONTACT_MIN_SECONDS", "2")):
+        return {"ok": True}
+    day = int(time.time() // 86400)
+    if _contact_day[0] != day:
+        _contact_day[:] = [day, 0]
+    # Real visitors are never locked out by a flood: messages keep being stored up to a high hard cap, and only the operator emails
+    # stop after CONTACT_PER_DAY (so a flood cannot spam the inbox or the mail quota).
+    if _contact_day[1] >= int(os.environ.get("CONTACT_HARD_PER_DAY", "2000")):
+        raise HTTPException(429, "We are receiving a lot of messages right now. Please try again tomorrow.")
+    _contact_day[1] += 1
+    dbm.add_message(body.name, str(body.email), body.topic, body.message)
+    to = os.environ.get("CONTACT_EMAIL", "").strip()
+    if to and mailer.mode() != "none" and _contact_day[1] <= int(os.environ.get("CONTACT_PER_DAY", "100")):
+        try:
+            mailer.send(to, f"[Nexara] {body.topic} from {body.name}", f"From: {body.name} <{body.email}>\nTopic: {body.topic}\n\n{body.message}\n")
+        except Exception:      # noqa: BLE001  the visitor's message is stored either way; never fail them over mail
+            pass
+    return {"ok": True}
+
+
+_contact_day = [0, 0]
+
+
+@app.get("/api/messages", dependencies=[Depends(factory_auth)])
+def messages():
+    return dbm.list_messages()
+
+
+@app.post("/api/messages/{message_id}/read", dependencies=[Depends(factory_auth)])
+def message_read(message_id: str):
+    if not dbm.mark_message_read(message_id):
+        raise HTTPException(404, "Message not found")
+    return {"ok": True}
+
+
 @app.post("/api/requests", status_code=201)
 def create_request(body: RequestIn, request: Request, background: BackgroundTasks):
     limit("req", client_ip(request), int(os.environ.get("REQUESTS_PER_HOUR_PER_IP", "20")), 3600, "requests from this address")
-    r = dbm.create_request(body.model_dump())
+    data = body.model_dump()
+    if not (data.get("examples") or "").strip():
+        data.pop("examples", None)
+    r = dbm.create_request(data)
     required = delivery_service.verification_required()
     if required:
         background.add_task(verification.send_safely, r)   # same response whether or not mail is configured (no oracle)
@@ -194,11 +275,6 @@ def verify_email(body: VerifyIn, request: Request):
     if not verification.confirm(body.token):
         raise HTTPException(400, "This link is invalid, already used, or has expired.")   # one message for every failure: no oracle
     return {"ok": True}
-
-
-@app.get("/verify")
-def verify_page():
-    return FileResponse(FRONTEND / "verify.html")
 
 
 @app.get("/api/mail/status", dependencies=[Depends(factory_auth)])
@@ -305,11 +381,6 @@ def track(request_id: str, request: Request, response: Response):
     return {"status": b["status"], "steps": steps, "checks": {"passed": t.get("passed"), "total": t.get("total")} if t.get("total") else None}
 
 
-@app.get("/track")
-def track_page():
-    return FileResponse(FRONTEND / "track.html")
-
-
 @app.get("/api/agents", dependencies=[Depends(factory_auth)])
 def list_agents():
     return dbm.list_agents()
@@ -332,6 +403,14 @@ async def revise_agent(agent_id: str, body: ReviseIn):
     a = _agent_or_404(agent_id)
     spec, provider, model = await agent_service.revise_spec(a["spec"], body.instruction, dbm.get_request(a["request_id"]))
     return {"current": a["spec"], "proposed": spec, "provider": provider, "model": model}
+
+
+@app.post("/api/agents/{agent_id}/generate-tests", dependencies=[Depends(factory_auth)])
+async def generate_tests(agent_id: str, body: GenerateTestsIn):
+    """AI-written extra test cases (each carries its own inline input). Previewed by the caller; nothing is saved here."""
+    a = _agent_or_404(agent_id)
+    scenarios, provider, model = await agent_service.generate_tests(a["spec"], body.count, body.focus)
+    return {"scenarios": scenarios, "provider": provider, "model": model}
 
 
 @app.post("/api/agents/{agent_id}/run", dependencies=[Depends(factory_auth)])
@@ -449,14 +528,44 @@ def stats():
     return dbm.stats()
 
 
-@app.get("/request")
-def request_page():
-    return FileResponse(FRONTEND / "request.html")
-
-
 @app.get("/factory")
 def factory_page():
     return FileResponse(FRONTEND / "factory.html")
 
 
-app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="site")
+def _page_route(path):
+    def view(request: Request):
+        return HTMLResponse(pages.render(path, request))
+    return view
+
+
+for _p in pages.PAGES:
+    app.add_api_route(_p, _page_route(_p), methods=["GET"], include_in_schema=False)
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap_xml(request: Request):
+    return Response(pages.sitemap(request), media_type="application/xml")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots_txt(request: Request):
+    return PlainTextResponse(pages.robots(request))
+
+
+def _wants_json(request: Request) -> bool:
+    a = request.headers.get("accept", "")
+    return "application/json" in a and "text/html" not in a
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exc(request: Request, exc: StarletteHTTPException):
+    """Browsers get a styled 404 page; the API and everything else keeps JSON."""
+    if exc.status_code == 404 and not request.url.path.startswith("/api") and not _wants_json(request):
+        return HTMLResponse(pages.render(request.url.path, request, "404"), status_code=404)
+    return Response(status_code=exc.status_code, media_type="application/json", content=__import__("json").dumps({"detail": exc.detail}),
+                    headers=getattr(exc, "headers", None))
+
+
+for _d in ("css", "js", "fonts"):      # only the asset folders are public: layout and page fragments are templates, not files to serve
+    app.mount(f"/{_d}", StaticFiles(directory=FRONTEND / _d), name=_d)

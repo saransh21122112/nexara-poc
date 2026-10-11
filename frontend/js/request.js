@@ -4,7 +4,7 @@ sel.innerHTML=TYPES.map(t=>`<option>${t}</option>`).join("");
 const pre=new URLSearchParams(location.search).get("agent");if(TYPES.includes(pre))sel.value=pre;
 const MIN={business_problem:10,tasks:5,required_output:3};
 const GH=/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
-function check(){let ok=true;for(const el of f.elements){if(!el.name||el.name==="agent_type"||el.name==="claude_status"||el.name==="os")continue;const nx=el.nextElementSibling;const e=nx&&nx.classList.contains("err")?nx:null; // the error box that directly follows this field
+function check(){let ok=true;for(const el of f.elements){if(!el.name||el.name==="agent_type"||el.name==="claude_status"||el.name==="os")continue;if(!el.required&&!el.value.trim()){const nx0=el.closest(".fld")&&el.closest(".fld").querySelector(".err");if(nx0)nx0.textContent="";continue}const nx=el.nextElementSibling;const e=nx&&nx.classList.contains("err")?nx:null; // the error box that directly follows this field
  let m="";const v=el.value.trim();if(!v)m="Required";else if(MIN[el.name]&&v.length<MIN[el.name])m=`At least ${MIN[el.name]} characters`;
  else if(el.name==="github_username"&&!GH.test(v.replace(/^@/,"")))m="Enter just your GitHub username (letters, digits, single hyphens)";
  else if(el.type==="email"&&!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v))m="Enter a valid email";
