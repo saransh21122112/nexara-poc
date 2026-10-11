@@ -1,0 +1,24 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> pick this repo. Creates the web service + a Postgres database.
+services:
+  - type: web
+    name: nexara
+    runtime: docker
+    plan: free                       # free web services sleep when idle (slow first request); use "starter" for always-on
+    healthCheckPath: /api/health
+    envVars:
+      - key: AI_PROVIDER
+        value: anthropic             # never claude_subscription on a public host
+      - key: PORT
+        value: "8000"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexara-db
+          property: connectionString
+      - key: FACTORY_PASSWORD
+        generateValue: true          # random; read it in the Render dashboard -> Environment
+      - key: ANTHROPIC_API_KEY
+        sync: false                  # you paste this in the dashboard; customer API calls need it (or OPENAI_API_KEY)
+
+databases:
+  - name: nexara-db
+    plan: free                       # free Postgres instances expire after a limited period: check Render's current terms

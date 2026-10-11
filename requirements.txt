@@ -1,0 +1,17 @@
+fastapi
+uvicorn
+anthropic
+openai
+claude-agent-sdk
+python-dotenv
+pydantic
+pyyaml
+pytest
+httpx
+langgraph
+langchain
+langchain-anthropic
+langchain-openai
+email-validator
+pytest-asyncio
+psycopg[binary]

@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Request an agent - Nexara AI</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%237c3aed%27/%3E%3Ctext x=%2716%27 y=%2723%27 font-size=%2720%27 text-anchor=%27middle%27 fill=%27%23c6ff3d%27 font-family=%27sans-serif%27 font-weight=%27700%27%3EN%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/site.css"></head><body><div class="wrap">
+<nav><a class="logo" href="/">Nexara<b>.AI</b></a><a class="link" href="/">&larr; Back</a></nav>
+<div class="formcard" id="box">
+<form id="f" novalidate><h1>Build your AI agent</h1><p class="sub">Tell us about the problem. An engineer will review and build it.</p>
+<div class="two"><div><label for="company_name">Company name</label><input id="company_name" name="company_name" required maxlength="120"><div class="err"></div></div>
+<div><label for="industry">Industry</label><input id="industry" name="industry" required maxlength="120"><div class="err"></div></div></div>
+<label for="agent_type">Agent type</label><select id="agent_type" name="agent_type"></select>
+<label for="business_problem">Business problem</label><textarea id="business_problem" name="business_problem" required minlength="10" placeholder="What is slow, costly or error-prone today?"></textarea><div class="err"></div>
+<label for="tasks">Tasks the agent should perform</label><textarea id="tasks" name="tasks" required minlength="5"></textarea><div class="err"></div>
+<label for="existing_tools">Existing tools or software</label><input id="existing_tools" name="existing_tools" required placeholder="e.g. Zendesk, Excel, HubSpot"><div class="err"></div>
+<label for="required_output">Required output</label><textarea id="required_output" name="required_output" required minlength="3" placeholder="What should the agent deliver?"></textarea><div class="err"></div>
+<label for="contact_email">Contact email</label><input id="contact_email" name="contact_email" type="email" required><div class="err"></div>
+<div id="top" class="banner bad" hidden></div>
+<p style="margin-top:24px"><button class="btn lime" id="go" type="submit">Submit request</button></p></form></div></div>
+<script src="/js/request.js"></script></body></html>

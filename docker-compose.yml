@@ -1,0 +1,14 @@
+# One container serves both the FastAPI backend and the static frontend.
+services:
+  nexara:
+    build: .
+    ports:
+      - "${NEXARA_PORT:-8090}:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - nexara-db:/app/db      # SQLite survives container rebuilds
+    restart: unless-stopped
+volumes:
+  nexara-db:

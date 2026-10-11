@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent Factory - Nexara AI</title><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%237c3aed%27/%3E%3Ctext x=%2716%27 y=%2723%27 font-size=%2720%27 text-anchor=%27middle%27 fill=%27%23c6ff3d%27 font-family=%27sans-serif%27 font-weight=%27700%27%3EN%3C/text%3E%3C/svg%3E"><meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/factory.css"></head><body>
+<div id="login"><form class="lbox" id="lf"><h2>Agent Factory</h2><p class="muted">Internal Nexara dashboard</p>
+<label for="pw">Password</label><input id="pw" type="password" autofocus>
+<div class="warn"><b>Demo authentication.</b> One shared password from <code>FACTORY_PASSWORD</code> (default <code>nexara-demo</code>). This is not production security.</div>
+<div id="lerr" class="bad" hidden></div><button class="btn" type="submit">Sign in</button></form></div>
+<div id="app" hidden>
+<aside><div class="logo">Nexara<b>.AI</b></div>
+<button class="nav on" data-v="overview">Overview</button><button class="nav" data-v="requests">Client Requests</button>
+<button class="nav" data-v="builder">Agent Builder</button><button class="nav" data-v="playground">Agent Playground</button></aside>
+<main><div class="top"><div class="prov"><span class="muted">AI provider</span><select id="prov"></select><span id="provnote" class="muted"></span></div><button class="btn sec" id="signout">Sign out</button></div>
+<div id="view"></div></main></div>
+<script src="/js/factory.js"></script></body></html>
