@@ -184,8 +184,12 @@ async def assist_request(body: AssistIn, request: Request):
         raise HTTPException(502, str(e))
 
 
+_CONTACT_KEY = secrets.token_bytes(32)    # random per process and unrelated to any password: tickets are public, so the key must not be guessable
+
+
 def _ticket_secret() -> bytes:
-    return (os.environ.get("CONTACT_SECRET") or "nexara-contact:" + os.environ.get("FACTORY_PASSWORD", "nexara-demo")).encode()
+    # A restart invalidates open forms; the visitor is told to reload. Set CONTACT_SECRET (>= 32 random chars) if you run several workers.
+    return os.environ.get("CONTACT_SECRET", "").encode() or _CONTACT_KEY
 
 
 def _sign(ts: int) -> str:
@@ -221,12 +225,14 @@ def contact(body: ContactIn, request: Request):
     day = int(time.time() // 86400)
     if _contact_day[0] != day:
         _contact_day[:] = [day, 0]
-    if _contact_day[1] >= int(os.environ.get("CONTACT_PER_DAY", "100")):
+    # Real visitors are never locked out by a flood: messages keep being stored up to a high hard cap, and only the operator emails
+    # stop after CONTACT_PER_DAY (so a flood cannot spam the inbox or the mail quota).
+    if _contact_day[1] >= int(os.environ.get("CONTACT_HARD_PER_DAY", "2000")):
         raise HTTPException(429, "We are receiving a lot of messages right now. Please try again tomorrow.")
     _contact_day[1] += 1
     dbm.add_message(body.name, str(body.email), body.topic, body.message)
     to = os.environ.get("CONTACT_EMAIL", "").strip()
-    if to and mailer.mode() != "none":
+    if to and mailer.mode() != "none" and _contact_day[1] <= int(os.environ.get("CONTACT_PER_DAY", "100")):
         try:
             mailer.send(to, f"[Nexara] {body.topic} from {body.name}", f"From: {body.name} <{body.email}>\nTopic: {body.topic}\n\n{body.message}\n")
         except Exception:      # noqa: BLE001  the visitor's message is stored either way; never fail them over mail

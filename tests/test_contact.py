@@ -59,15 +59,39 @@ def test_too_fast_submission_is_dropped_quietly_and_bad_ticket_is_refused_visibl
     assert r.status_code == 400 and "reload" in r.json()["detail"].lower()                       # a human: told what to do
 
 
-def test_per_ip_and_daily_limits(client, monkeypatch):
+def test_per_ip_limit_and_a_hard_daily_cap(client, monkeypatch):
     monkeypatch.setenv("CONTACT_PER_HOUR_PER_IP", "2")
     assert [send(client).status_code for _ in range(3)] == [201, 201, 429]
     from backend import main
     main._buckets.clear()
     monkeypatch.setenv("CONTACT_PER_HOUR_PER_IP", "50")
-    monkeypatch.setenv("CONTACT_PER_DAY", "3")
-    codes = [send(client).status_code for _ in range(3)]
-    assert codes[-1] == 429
+    monkeypatch.setenv("CONTACT_HARD_PER_DAY", "3")
+    main._contact_day[:] = [0, 0]
+    assert [send(client).status_code for _ in range(4)][-1] == 429
+
+
+def test_a_flood_never_blocks_real_messages_it_only_stops_operator_emails(client, monkeypatch):
+    from backend import main
+    sent = []
+    monkeypatch.setattr(mailer, "send", lambda to, subject, text, html=None: sent.append(1) or "smtp")
+    monkeypatch.setattr(mailer, "mode", lambda: "smtp")
+    monkeypatch.setenv("CONTACT_EMAIL", "ops@nexara.example")
+    monkeypatch.setenv("CONTACT_PER_DAY", "2")
+    monkeypatch.setenv("CONTACT_PER_HOUR_PER_IP", "50")
+    main._contact_day[:] = [0, 0]
+    codes = [send(client).status_code for _ in range(5)]
+    assert codes == [201] * 5 and len(client.get("/api/messages").json()) == 5 and len(sent) == 2
+
+
+def test_ticket_key_is_not_derived_from_the_staff_password(client, monkeypatch):
+    from backend import main
+    t = client.get("/api/contact/ticket").json()["ticket"]
+    ts = t.split(".")[0]
+    import hashlib, hmac
+    for guess in ("nexara-demo", "nexara-contact:nexara-demo", "hunter2"):
+        assert not hmac.compare_digest(t, f"{ts}." + hmac.new(f"nexara-contact:{guess}".encode(), ts.encode(), hashlib.sha256).hexdigest()[:32])
+    monkeypatch.setenv("CONTACT_SECRET", "x" * 40)
+    assert main._ticket_age(main._sign(int(__import__("time").time()))) is not None
 
 
 def test_html_is_stored_as_plain_data_never_interpreted(client):

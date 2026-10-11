@@ -26,7 +26,7 @@ owner: saransh21122112
 2. `GET /sitemap.xml` lists public pages only; `GET /robots.txt` disallows `/factory /track /verify /api`; private pages carry `noindex`.
 3. Legal/contact details come from env (`CONTACT_EMAIL`, `LEGAL_NAME`, `LEGAL_ADDRESS`, `POLICY_EFFECTIVE`, `POLICY_REVIEWED`). Unset values render nothing; until `POLICY_REVIEWED=true` the legal pages show a "draft pending legal review" note.
 4. Public text never contains internals (deny-list in tests).
-5. `POST /api/contact` validates name, email, topic, message (length-capped), rejects honeypot or too-fast submissions with a generic success, limits per IP (default 5/hour) and globally per day, stores the message, and emails the operator only when SMTP is configured. `GET /api/messages` and `POST /api/messages/{id}/read` are factory-only.
+5. `POST /api/contact` validates name, email, topic, message (length-capped), rejects honeypot or too-fast submissions with a generic success, limits per IP (default 5/hour) stores the message (hard cap 2000/day as a flood guard, so real visitors are not locked out), and emails the operator only when SMTP is configured and only for the first 100 messages a day. The anti-bot ticket is signed with a random per-process key that is not derived from any password. `GET /api/messages` and `POST /api/messages/{id}/read` are factory-only.
 6. Page scrollbar is hidden on public pages with a thin reading-progress line instead; inner scroll areas and the factory use thin themed scrollbars.
 7. Under 640px tables render as stacked cards, tags never wrap letter by letter, long values wrap, navigation is a sheet menu (public) or a scrollable pill bar (factory).
 8. A strict Content-Security-Policy is sent; no public page needs inline scripts.
