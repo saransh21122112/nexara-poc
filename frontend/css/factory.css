@@ -57,7 +57,7 @@ dl{background:var(--well);border:1px solid var(--line);border-radius:12px;paddin
 .node.done .ring{background:var(--g1);border-color:var(--g1);color:var(--m2)}.node.done small{color:var(--g2)}
 .node.active .ring{background:var(--m1);border-color:var(--m1);color:var(--g1);animation:ringp 1.6s ease-out infinite}.node.active small{color:var(--m1);font-weight:600}
 .node.bad .ring{background:#fdecef;border-color:var(--err);color:var(--err)}.node.bad small{color:var(--err)}
-.node.next{opacity:.7}.node:hover .ring{transform:scale(1.08)}.node.sel b{text-decoration:underline;text-decoration-color:var(--g1);text-underline-offset:4px;text-decoration-thickness:2px}
+.node.next .ring{opacity:.75}.node:hover .ring{transform:scale(1.08)}.node.sel b{text-decoration:underline;text-decoration-color:var(--g1);text-underline-offset:4px;text-decoration-thickness:2px}
 @keyframes ringp{0%{box-shadow:0 0 0 0 rgba(107,29,42,.4)}100%{box-shadow:0 0 0 14px rgba(107,29,42,0)}}
 .conn{flex:1;height:2px;margin-top:24px;background:var(--line2);min-width:16px}
 .conn.done{background:var(--g1)}

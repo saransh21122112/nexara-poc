@@ -10,7 +10,7 @@ Nothing under `backend/` or `frontend/` changes before there is an agreed spec i
 2. Write `docs/specs/NNN-<name>.md` from `docs/specs/000-template.md` (or run `/spec <name>`). Get it agreed, then set `status: approved`.
 3. Write failing tests for each acceptance criterion, then implement, then update the Mermaid diagrams in `docs/` if flows, data or architecture changed.
 4. Run the app and use the feature like a user. For UI, check `docs/ui-quality.md` (phone width, scrollbars, keyboard, reduced motion).
-5. Set the spec `status: implemented` and open a **pull request to `dev`** using the template. CI must pass (tests on SQLite and Postgres, spec check).
+5. Set the spec `status: implemented` and open a **pull request to `dev`** using the template. CI must pass (backend tests on SQLite and Postgres, frontend tests, spec check).
 Typos, dependency bumps and test-only changes may skip the spec with a `No-spec: <reason>` line in the PR description. Full detail: `docs/sdd.md`.
 
 ## Non-negotiables
@@ -25,7 +25,9 @@ Typos, dependency bumps and test-only changes may skip the spec with a `No-spec:
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env                      # set FACTORY_PASSWORD, a provider, optional GITHUB_*, SMTP_*
 .venv/bin/uvicorn backend.main:app --reload --port 8000    # site at /, staff dashboard at /factory
-.venv/bin/python -m pytest -q tests                        # SQLite (default)
+.venv/bin/python -m pytest -q tests -m "not ui"              # backend tests, SQLite (default)
+.venv/bin/python -m playwright install chromium            # once, for the browser tests
+.venv/bin/python -m pytest -q tests -m ui                  # frontend tests: real browser, phone/desktop, accessibility
 TEST_DATABASE_URL=postgresql://user:pass@localhost:5433/db .venv/bin/python -m pytest -q tests   # Postgres
 python scripts/build_diagrams.py          # regenerate docs/diagrams/architecture.html after editing diagrams in docs/*.md
 python scripts/check_spec.py              # the spec gate CI runs (needs BASE_REF, default origin/dev)

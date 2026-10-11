@@ -10,7 +10,7 @@ Nobody writes code here before there is a written, reviewed spec. The spec is th
 5. **Implement** the smallest change that makes the tests pass. Keep public text free of internals (see below).
 6. **Update the docs**: any change to flows, data model or architecture updates the Mermaid diagrams in `docs/architecture.md` / `docs/flows.md` in the same PR.
 7. **Verify** like a user: run the app, walk the flow, for UI changes screenshot desktop and phone and tick `docs/ui-quality.md`.
-8. Set the spec `status: implemented`, open a **pull request to `dev`** using the template. CI must be green (tests on SQLite and Postgres, spec check).
+8. Set the spec `status: implemented`, open a **pull request to `dev`** using the template. CI must be green (backend tests on SQLite and Postgres, frontend browser tests, spec check).
 9. A reviewer merges into `dev`. `dev` -> `main` is a separate, deliberate release PR.
 
 ## What counts as "needs a spec"
