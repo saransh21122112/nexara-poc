@@ -29,7 +29,7 @@ async function overview(v){const s=await api("/stats");
  <div class="panel"><h3>Recent activity</h3>${s.recent_activity.length?`<table>${s.recent_activity.map(a=>`<tr><td><span class="tag">${a.type}</span>${esc(a.text)}</td><td class="muted">${fmt(a.at)}</td></tr>`).join("")}</table>`:'<div class="empty">No activity yet. Submit a request on the public site to begin.</div>'}</div>`}
 
 async function requests(v){const [rs,cs]=await Promise.all([api("/requests"),api("/customers")]);if(!SEL.req&&rs[0])SEL.req=rs[0].id;
- v.innerHTML=`<h2>Client Requests</h2><p class="muted">${rs.length} submitted</p>${rs.length?`<div class="split"><div>${rs.map(r=>`<div class="item ${r.id===SEL.req?"on":""}" data-id="${r.id}"><b>${esc(r.company_name)}</b><br><small>${r.id} · ${esc(r.agent_type)}${r.agent_count?` · ${r.agent_count} agent(s)`:""}</small></div>`).join("")}</div><div class="panel" id="detail"></div></div>`:'<div class="empty">No requests yet. Open the public site and submit one.</div>'}`;
+ v.innerHTML=`<h2>Requests</h2><p class="muted">${rs.length} submitted</p>${rs.length?`<div class="split"><div>${rs.map(r=>`<div class="item ${r.id===SEL.req?"on":""}" data-id="${r.id}"><b>${esc(r.company_name)}</b><br><small>${r.id} · ${esc(r.agent_type)}${r.agent_count?` · ${r.agent_count} agent(s)`:""}</small></div>`).join("")}</div><div class="panel" id="detail"></div></div>`:'<div class="empty">No requests yet. Open the public site and submit one.</div>'}`;
  if(!rs.length)return;const show=()=>{const r=rs.find(x=>x.id===SEL.req)||rs[0];
   $("#detail").innerHTML=`<h3>${esc(r.company_name)} <span class="tag">${esc(r.agent_type)}</span></h3><p class="muted">${r.id} · ${fmt(r.created_at)}</p><dl>
   ${[["Industry","industry"],["Business problem","business_problem"],["Tasks","tasks"],["Existing tools","existing_tools"],["Required output","required_output"],["Contact","contact_email"],["GitHub","github_username"],["Claude","claude_status"],["OS","os"]].map(([l,k])=>`<dt>${l}</dt><dd>${esc(r[k])}</dd>`).join("")}</dl>
@@ -49,7 +49,7 @@ async function requests(v){const [rs,cs]=await Promise.all([api("/requests"),api
 const L=(a)=>(a||[]).join("\n"),J=o=>JSON.stringify(o,null,2);
 async function builder(v){const [rs,agents]=await Promise.all([api("/requests"),api("/agents")]);
  const reqAgents=agents.filter(a=>a.request_id===SEL.req);if(!SEL.agent||!agents.find(a=>a.id===SEL.agent))SEL.agent=reqAgents[0]?.id||agents[0]?.id||null;
- v.innerHTML=`<h2>Agent Builder</h2><p class="muted">Turn a client requirement into an editable agent specification.</p>${cfgBanner()}
+ v.innerHTML=`<h2>Builder</h2><p class="muted">Turn a client requirement into an editable agent specification.</p>${cfgBanner()}
  <div class="panel"><div class="row"><select id="rq" style="max-width:380px"><option value="">Select a client request...</option>${rs.map(r=>`<option value="${r.id}" ${r.id===SEL.req?"selected":""}>${r.id} - ${esc(r.company_name)} (${esc(r.agent_type)})</option>`).join("")}</select>
  <button class="btn" id="gen">Generate Agent</button><span id="gst" class="muted"></span></div><div id="gerr"></div></div>
  <div class="panel"><div class="row"><b>Agents</b><select id="ag" style="max-width:420px"><option value="">${agents.length?"Select an agent...":"No agents yet"}</option>${agents.map(a=>`<option value="${a.id}" ${a.id===SEL.agent?"selected":""}>${a.id} - ${esc(a.spec.agent_name)}</option>`).join("")}</select></div></div><div id="spec"></div>`;
@@ -151,8 +151,8 @@ async function customerDetail(id,live){const d=await api(`/customers/${id}`);con
 
 const EXAMPLES={"Customer Support":"Draft a response to a customer whose order ORD-1001 has been delayed.","Data Analyst":"Analyze the sales figures and identify the best-performing product by revenue."};
 async function playground(v){const agents=await api("/agents");if(!SEL.agent||!agents.find(a=>a.id===SEL.agent))SEL.agent=agents[0]?.id||null;
- if(!agents.length){v.innerHTML='<h2>Agent Playground</h2><div class="empty">No agents yet. Generate one in the Agent Builder.</div>';return}
- v.innerHTML=`<h2>Agent Playground</h2><p class="muted">Run real tasks through a saved agent. Tools: calculator, lookup_business_data (sales, customers, orders).</p>${cfgBanner()}
+ if(!agents.length){v.innerHTML='<h2>Playground</h2><div class="empty">No agents yet. Generate one in the Agent Builder.</div>';return}
+ v.innerHTML=`<h2>Playground</h2><p class="muted">Run real tasks through a saved agent. Tools: calculator, lookup_business_data (sales, customers, orders).</p>${cfgBanner()}
  <div class="panel"><label style="margin-top:0">Agent</label><select id="ag">${agents.map(a=>`<option value="${a.id}" ${a.id===SEL.agent?"selected":""}>${a.id} - ${esc(a.spec.agent_name)}</option>`).join("")}</select>
  <label>Task</label><textarea id="task" placeholder="Enter a test task..."></textarea><div class="chips" id="chips"></div>
  <div class="row"><button class="btn" id="run">Run task</button><button class="btn sec" id="test">Run Test (scenarios)</button><span id="st" class="muted"></span></div></div><div id="out"></div><div id="hist"></div>`;

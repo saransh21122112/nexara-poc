@@ -2,8 +2,8 @@ import re
 from typing import Any, Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-AGENT_TYPES = ["Customer Support", "Sales", "Data Analyst", "Research", "Workflow Automation", "Custom"]
-AgentType = Literal["Customer Support", "Sales", "Data Analyst", "Research", "Workflow Automation", "Custom"]
+AGENT_TYPES = ["Plugin", "Skill", "MCP server", "Tool", "Custom"]   # what the customer wants built; the DB column keeps its old name `agent_type`
+AgentType = Literal["Plugin", "Skill", "MCP server", "Tool", "Custom"]
 
 
 # GitHub usernames: 1-39 chars, letters/digits/single hyphens, cannot start or end with a hyphen
@@ -37,6 +37,40 @@ class RequestIn(BaseModel):
         if not GITHUB_USER_RE.match(v):
             raise ValueError("enter your GitHub username (letters, digits, single hyphens; no URL)")
         return v
+
+
+ASSIST_FIELDS = ("company_name", "industry", "agent_type", "business_problem", "tasks", "existing_tools", "required_output")
+
+
+class AssistIn(BaseModel):
+    """Free-text request to the form assistant: fill everything from `description`, or change boxes per `instruction`."""
+    description: str = Field(default="", max_length=1500)
+    instruction: str = Field(default="", max_length=500)
+    field: str | None = None                                  # limit an edit to one box
+    current: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("field")
+    @classmethod
+    def _field(cls, v):
+        if v is not None and v not in ASSIST_FIELDS:
+            raise ValueError("unknown field")
+        return v
+
+    @field_validator("current")
+    @classmethod
+    def _current(cls, v):
+        return {k: str(x)[:4000] for k, x in v.items() if k in ASSIST_FIELDS}   # drop anything that is not a form box
+
+
+class AssistOut(BaseModel):
+    """What the assistant may return: text boxes only (never contact, GitHub or OS)."""
+    company_name: str | None = Field(default=None, max_length=120)
+    industry: str | None = Field(default=None, max_length=120)
+    agent_type: AgentType | None = None
+    business_problem: str | None = Field(default=None, max_length=4000)
+    tasks: str | None = Field(default=None, max_length=4000)
+    existing_tools: str | None = Field(default=None, max_length=2000)
+    required_output: str | None = Field(default=None, max_length=2000)
 
 
 class TestScenario(BaseModel):

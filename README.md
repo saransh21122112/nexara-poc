@@ -81,3 +81,6 @@ Fake GitHub (`tests/fake_github.py`) for the client, delivery, sync, conflict, i
 - The agent's "don't open secret files" rule is an instruction, not a lock (once it ran a count-only search on `.env`); the plugin README ships a `permissions.deny` snippet for a hard block.
 - Claude Code needs a paid Claude plan (Pro/Max/Team/Enterprise) or an Anthropic Console account; the free claude.ai plan does not include it.
 - Deleting a customer repo is manual (the token needs `delete_repo`, which this app never asks for).
+
+## Request-form assistant
+`POST /api/requests/assist` lets a customer describe what they want and fills the request form (or edits one box on request). It is public, so it is limited per IP (`ASSIST_PER_HOUR_PER_IP`, default 10) and per day overall (`ASSIST_PER_DAY`, default 200), input is capped at 1,500 characters, and it can only return the form's text boxes (never email, GitHub or OS). It uses the active provider; if none is configured the form still works by hand.

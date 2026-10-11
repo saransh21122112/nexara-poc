@@ -22,7 +22,7 @@ def env(client, monkeypatch):
         return cur["spec"], "anthropic", "m"
     monkeypatch.setattr(agent_service, "generate_spec", fake_spec)
 
-    def mk(company="Acme Corp", gh="acme-dev", email="ops@acme.example", spec=None, agent_type="Data Analyst", verified=True):
+    def mk(company="Acme Corp", gh="acme-dev", email="ops@acme.example", spec=None, agent_type="Skill", verified=True):
         cur["spec"] = spec or SPEC
         body = {**REQ, "company_name": company, "github_username": gh, "contact_email": email, "agent_type": agent_type}
         r = client.post("/api/requests", json=body).json()

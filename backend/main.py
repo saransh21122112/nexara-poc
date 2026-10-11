@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from . import agent_service, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
 from .github_client import GitHubClient, GitHubError, NotConfigured as GitHubNotConfigured  # noqa: E402
-from .models import (AGENT_TYPES, AgentSpec, AttachIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
+from .models import (AGENT_TYPES, AgentSpec, AssistIn, AttachIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
                      ManualVerifyIn, ProviderIn, RequestIn, RunIn, SyncIn, VerifyIn)
 from .providers import NotConfigured, UpstreamError  # noqa: E402
 
@@ -152,6 +152,28 @@ def get_provider():
 def put_provider(body: ProviderIn):
     providers.set_provider(body.provider)
     return providers.status()
+
+
+_assist_day = [0, 0]   # [day number, count]: one global daily cap, because this public endpoint spends the owner's model quota
+
+
+@app.post("/api/requests/assist")
+async def assist_request(body: AssistIn, request: Request):
+    if not (body.description.strip() or body.instruction.strip()):
+        raise HTTPException(422, "Tell the assistant what you need.")
+    limit("assist", client_ip(request), int(os.environ.get("ASSIST_PER_HOUR_PER_IP", "10")), 3600, "assistant requests from this address")
+    day = int(time.time() // 86400)
+    if _assist_day[0] != day:
+        _assist_day[:] = [day, 0]
+    if _assist_day[1] >= int(os.environ.get("ASSIST_PER_DAY", "200")):
+        raise HTTPException(429, "The assistant has reached its daily limit. Please fill the form in by hand.")
+    _assist_day[1] += 1
+    try:
+        return {"fields": await agent_service.assist_form(body)}
+    except NotConfigured as e:
+        raise HTTPException(503, str(e))
+    except UpstreamError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.post("/api/requests", status_code=201)
