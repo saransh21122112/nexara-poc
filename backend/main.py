@@ -51,9 +51,14 @@ _buckets: dict[str, collections.deque] = {}  # ponytail: in-memory per-process l
 
 
 def client_ip(request: Request) -> str:
-    """Address used for rate limiting. Client-supplied headers are NOT trusted by default (they are trivially spoofed).
-    Behind exactly N trusted proxies set TRUSTED_PROXY_HOPS=N: we then take the Nth entry from the RIGHT of
-    X-Forwarded-For, i.e. the address your own proxy appended, which a client cannot forge."""
+    """Address used for rate limiting. Client-supplied headers are NOT trusted by default (trivially spoofed).
+    - On Render (RENDER set) or with TRUST_CF_CONNECTING_IP=1: Cloudflare sits in front and sets CF-Connecting-IP itself,
+      overwriting any client-sent value, so that header is trusted.
+    - With TRUSTED_PROXY_HOPS=N: take the Nth entry from the RIGHT of X-Forwarded-For (the one your own proxy appended).
+    - Otherwise: the socket peer."""
+    if os.environ.get("TRUST_CF_CONNECTING_IP") == "1" or os.environ.get("RENDER"):
+        if cf := request.headers.get("cf-connecting-ip", "").strip():
+            return cf
     hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
     xff = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
     if hops > 0 and len(xff) >= hops:
@@ -95,8 +100,9 @@ async def no_cache_static(request, call_next):
 
 
 @app.get("/api/health")
-def health():
-    return {"status": "ok", "agent_types": AGENT_TYPES, "public_base_url": os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL", ""), **providers.status()}
+def health(request: Request):
+    return {"status": "ok", "client_ip": client_ip(request),  # the caller's own address as the rate limiter sees it
+            "agent_types": AGENT_TYPES, "public_base_url": os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL", ""), **providers.status()}
 
 
 @app.post("/api/factory/login")

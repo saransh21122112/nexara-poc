@@ -180,3 +180,20 @@ def test_spoofed_headers_cannot_evade_limits(client, monkeypatch):
 def test_security_headers(client):
     h = client.get("/api/health").headers
     assert h["x-content-type-options"] == "nosniff" and h["x-frame-options"] == "DENY"
+
+
+def test_cloudflare_header_trusted_only_when_enabled(client, monkeypatch):
+    from backend import main
+    main._buckets.clear()
+    monkeypatch.delenv("RENDER", raising=False)
+    monkeypatch.delenv("TRUST_CF_CONNECTING_IP", raising=False)
+    h = {"CF-Connecting-IP": "5.5.5.5"}
+    assert client.get("/api/health", headers=h).json()["client_ip"] != "5.5.5.5"  # ignored by default
+    monkeypatch.setenv("RENDER", "true")
+    assert client.get("/api/health", headers=h).json()["client_ip"] == "5.5.5.5"
+    assert client.get("/api/health").json()["client_ip"] == "testclient"  # header absent -> falls back safely
+    # distinct Cloudflare-reported clients are limited separately
+    codes = [client.post("/api/factory/login", json={"password": "bad"}, headers={"CF-Connecting-IP": "6.6.6.6"}).status_code for _ in range(11)]
+    assert codes[-1] == 429
+    assert client.post("/api/factory/login", json={"password": "nexara-demo"}, headers={"CF-Connecting-IP": "7.7.7.7"}).status_code == 200
+    main._buckets.clear()
