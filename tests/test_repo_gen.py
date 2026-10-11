@@ -157,8 +157,8 @@ def test_scripts_carry_the_right_names_and_parse():
         if shutil.which("bash"):
             r = subprocess.run(["bash", "-n"], input=files[name], text=True, capture_output=True)
             assert r.returncode == 0, (name, r.stderr)
-    assert "curl -fsSL https://claude.ai/install.sh | bash" in files["scripts/setup.sh"]
-    assert "irm https://claude.ai/install.ps1 | iex" in files["scripts/setup.ps1"]
+    assert "https://claude.ai/install.sh" in files["scripts/setup.sh"] and "install.sh | bash" not in files["scripts/setup.sh"]
+    assert "https://claude.ai/install.ps1" in files["scripts/setup.ps1"] and "| iex" not in files["scripts/setup.ps1"]
     assert f"claude plugin install \"$PLUGIN\" --marketplace \"$REPO\"" in files["scripts/setup.sh"]
     for ps in ("scripts/setup.ps1", "scripts/doctor.ps1", "scripts/update.ps1"):
         t = files[ps]

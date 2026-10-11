@@ -86,12 +86,35 @@ def test_setup_without_claude_declines_install_by_default(box):
     assert "claude.ai/install.sh" in box.out and not (box.home / ".local/bin/claude").exists()
 
 
+FAKE_INSTALLER = '''#!/bin/sh
+mkdir -p "$HOME/.local/bin"; printf '#!/bin/sh\\necho 2.1.0 (Claude Code)\\n' > "$HOME/.local/bin/claude"; chmod +x "$HOME/.local/bin/claude"
+'''
+
+
+def fake_curl(box, body):
+    """curl that writes `body` to the file given with -o (like the real download)."""
+    script(box.bin / "curl", 'while [ $# -gt 0 ]; do [ "$1" = "-o" ] && out="$2"; shift; done\ncat > "$out" <<\'EOF_\'\n' + body + 'EOF_\n')
+
+
 def test_setup_installs_claude_only_with_consent(box):
-    script(box.bin / "curl", 'echo \'mkdir -p "$HOME/.local/bin"; printf "#!/bin/sh\\necho 2.1.0 (Claude Code)\\n" > "$HOME/.local/bin/claude"; chmod +x "$HOME/.local/bin/claude"\'\n')
+    fake_curl(box, FAKE_INSTALLER)
     box.fake_gh()
     r = box.run("setup.sh", "--yes", access=True)
     assert r.returncode == 0, box.out
     assert (box.home / ".local/bin/claude").exists() and "installed" in box.out
+    assert "sha256" in box.out and not list(Path(box.tmp).glob("claude-install.*"))   # fingerprint shown, temp file removed
+
+
+def test_setup_refuses_a_download_that_is_not_a_script(box):
+    fake_curl(box, "<html>captive portal</html>")
+    r = box.run("setup.sh", "--yes", access=True)
+    assert r.returncode == 1 and "not an installer script" in box.out and not (box.home / ".local/bin/claude").exists()
+
+
+def test_setup_never_pipes_a_download_into_a_shell(box):
+    for n in ("setup.sh", "setup.ps1"):
+        t = (box.repo / "scripts" / n).read_text()
+        assert "| iex" not in t and "| Invoke-Expression" not in t and "curl -fsSL https://claude.ai/install.sh |" not in t
 
 
 def test_setup_stops_with_instructions_when_the_repo_is_not_readable(box):
@@ -241,6 +264,6 @@ def test_powershell_twins_exist_and_carry_the_same_steps(box):
     for n in ("setup.ps1", "doctor.ps1", "update.ps1"):
         text = (box.repo / "scripts" / n).read_text()
         assert MKT in text and SLUG in text and PLUGIN in text, n
-    assert "irm https://claude.ai/install.ps1 | iex" in (box.repo / "scripts/setup.ps1").read_text()
+    assert "https://claude.ai/install.ps1" in (box.repo / "scripts/setup.ps1").read_text()
     ps = (box.repo / "scripts/setup.ps1").read_text()
     assert "claude plugin install $Plugin --marketplace $Repo" in ps and f'$Repo = "{SLUG}"' in ps and f'$Plugin = "{PLUGIN}"' in ps

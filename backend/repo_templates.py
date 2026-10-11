@@ -63,6 +63,7 @@ there. Try:
 2. **Install Claude Code** (check first with `claude --version`):
    - macOS, Linux, WSL: `curl -fsSL https://claude.ai/install.sh | bash`
    - Windows PowerShell: `irm https://claude.ai/install.ps1 | iex`
+   - Prefer a package manager? macOS: `brew install --cask claude-code`. Windows: `winget install Anthropic.ClaudeCode`. (These do not self-update; the one-liners above do.)
 
    Open a **new** terminal, run `claude` once and sign in in the browser.
 3. **GitHub:** accept the invitation (link above), then let your computer read the private repo:
@@ -165,6 +166,20 @@ ask() { # never assumes yes unless --yes
 }
 case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH"; export PATH;; esac
 
+# Anthropic's official installer. Saved to a file first (not piped into a shell), checked to be a script, and fingerprinted, so
+# you can see exactly what runs; it still trusts claude.ai, as the official instructions do.
+install_claude() {
+  local tmp sum
+  tmp="$(mktemp "${TMPDIR:-/tmp}/claude-install.XXXXXX")" || { bad "could not create a temporary file"; return 1; }
+  if ! curl -fsSL "https://claude.ai/install.sh" -o "$tmp"; then bad "download from claude.ai failed (check your connection)"; rm -f "$tmp"; return 1; fi
+  if [ ! -s "$tmp" ] || ! head -c 2 "$tmp" | grep -q '^#!'; then bad "what was downloaded is not an installer script: refusing to run it"; rm -f "$tmp"; return 1; fi
+  if command -v shasum >/dev/null 2>&1; then sum="$(shasum -a 256 "$tmp" | cut -d' ' -f1)"; elif command -v sha256sum >/dev/null 2>&1; then sum="$(sha256sum "$tmp" | cut -d' ' -f1)"; else sum="(no checksum tool found)"; fi
+  say "     Downloaded the installer ($(wc -c < "$tmp" | tr -d ' ') bytes, sha256 $sum). Running it now."
+  bash "$tmp"; local rc=$?
+  rm -f "$tmp"
+  [ "$rc" = 0 ] || { bad "the installer exited with an error ($rc)"; return 1; }
+}
+
 say "1/4 git"
 if command -v git >/dev/null 2>&1; then ok "git found"; else bad "git is required: https://git-scm.com/downloads"; exit 1; fi
 
@@ -173,9 +188,9 @@ if command -v claude >/dev/null 2>&1; then
   ok "claude $(claude --version 2>/dev/null | head -1)"
 else
   bad "Claude Code is not installed."
-  say "     Official installer:  curl -fsSL https://claude.ai/install.sh | bash   (Windows: see START-HERE.md)"
+  say "     Official installer: https://claude.ai/install.sh (this script downloads it, shows its checksum, then runs it). Homebrew users can run instead: brew install --cask claude-code"
   if ask "     Install Claude Code now with that command?"; then
-    curl -fsSL https://claude.ai/install.sh | bash
+    install_claude || exit 1
     case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) PATH="$HOME/.local/bin:$PATH"; export PATH;; esac
     if command -v claude >/dev/null 2>&1; then ok "installed"; else bad "Installed, but 'claude' is not on PATH yet. Open a NEW terminal and run this again."; exit 1; fi
   else
@@ -326,9 +341,13 @@ Write-Host "2/4 Claude Code"
 if (Have claude) { Write-Host "  [ok] claude $(claude --version 2>$null)" }
 else {
   Write-Host "  [!!] Claude Code is not installed."
-  Write-Host "       Official installer:  irm https://claude.ai/install.ps1 | iex"
+  Write-Host "       Official installer: https://claude.ai/install.ps1 (this script downloads it, shows its checksum, then runs it). winget users can run instead: winget install Anthropic.ClaudeCode"
   if (Ask "       Install Claude Code now with that command?") {
-    Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression
+    $f = Join-Path $env:TEMP "claude-install.ps1"
+    try { Invoke-WebRequest https://claude.ai/install.ps1 -OutFile $f -UseBasicParsing } catch { Write-Host "  [!!] download from claude.ai failed (check your connection)"; exit 1 }
+    if ((Get-Item $f).Length -eq 0 -or -not ((Get-Content $f -TotalCount 1) -match "^\s*(#|\$|param|Set-|function|\[)")) { Remove-Item $f -Force; Write-Host "  [!!] what was downloaded does not look like an installer script: refusing to run it"; exit 1 }
+    Write-Host "       Downloaded the installer ($((Get-Item $f).Length) bytes, sha256 $((Get-FileHash $f -Algorithm SHA256).Hash.ToLower())). Running it now."
+    Invoke-Expression (Get-Content $f -Raw); Remove-Item $f -Force
     if (-not (Have claude)) { Write-Host "  [!!] Installed, but 'claude' is not on PATH yet. Open a NEW terminal and run this again."; exit 1 }
   } else { Write-Host "       Skipped. Install Claude Code, then run this again."; exit 1 }
 }
