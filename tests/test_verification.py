@@ -324,3 +324,49 @@ def test_mail_modes_and_status(monkeypatch, caplog):
     with caplog.at_level(logging.WARNING, logger="nexara.mail"):
         assert mailer.send("a@b.example", "Hi", "body text") == "logged"
     assert "body text" in caplog.text and "not sent" in caplog.text
+
+
+# ------------------------------------------------------------------ operator opt-out (no SMTP yet)
+def test_verification_is_on_by_default(monkeypatch):
+    from backend import delivery_service as ds
+    monkeypatch.delenv("REQUIRE_EMAIL_VERIFICATION", raising=False)
+    assert ds.verification_required() is True
+    for v in ("true", "1", "yes", "", "anything"):
+        monkeypatch.setenv("REQUIRE_EMAIL_VERIFICATION", v)
+        assert ds.verification_required() is True, v           # only an explicit off-value disables it
+
+
+@pytest.mark.parametrize("off", ["false", "FALSE", "0", "no", "off", " False "])
+def test_opt_out_allows_delivery_but_warns_and_keeps_every_other_gate(env, monkeypatch, off):
+    monkeypatch.setenv("REQUIRE_EMAIL_VERIFICATION", off)
+    monkeypatch.setenv("MAIL_MODE", "off")                         # no SMTP at all
+    _, a1, c1 = env.mk(company="Acme Corp", gh="victim-dev", email="ceo@acme.example", verified=False)
+    p = env.client.get(f"/api/agents/{a1}/delivery-preview").json()
+    assert p["blocked"] == [] and any("verification is switched OFF" in w for w in p["warnings"])
+    assert env.client.get("/api/mail/status").json()["verification_required"] is False
+    assert env.deliver(a1).status_code == 201                       # a first delivery works without any email
+    # the other protections are unchanged: a different GitHub user + email gets its own customer and repo...
+    _, a2, c2 = env.mk(company="Acme Corp", gh="attacker", email="ceo@acme.example", spec=spec2("Evil Agent"), verified=False)
+    assert c2 != c1 and env.client.get(f"/api/agents/{a2}/delivery-preview").json()["repo"]["name"] == "nexara-acme-corp-2"
+    # ...and a request attached to an existing repo still needs the acknowledgement and cannot invite an unverified GitHub user
+    rid3, a3, _ = env.mk(company="Acme Corp", gh="colleague", email="eng@acme.example", spec=spec2(), verified=False)
+    env.client.post(f"/api/requests/{rid3}/attach-customer", json={"customer_id": c1, "confirm": True})
+    assert env.deliver(a3, invite=False).status_code == 409 and "existing customer repository" in env.deliver(a3, invite=False).json()["detail"]
+    assert env.deliver(a3, invite=True, existing_repo_ack=True).status_code == 409
+    assert [i["login"] for i in env.fake.repos["nexara-acme-corp"]["invites"].values()] == ["victim-dev"]
+
+
+def test_switching_it_back_on_blocks_again(env, monkeypatch):
+    monkeypatch.setenv("REQUIRE_EMAIL_VERIFICATION", "false")
+    _, a1, _ = env.mk(verified=False)
+    assert env.client.get(f"/api/agents/{a1}/delivery-preview").json()["blocked"] == []
+    monkeypatch.setenv("REQUIRE_EMAIL_VERIFICATION", "true")
+    assert env.deliver(a1).status_code == 409
+
+
+def test_public_response_says_whether_verification_applies_and_skips_mail_when_off(client, monkeypatch, outbox):
+    on = submit(client).json()
+    assert on["verification_required"] is True and len(outbox) == 1
+    monkeypatch.setenv("REQUIRE_EMAIL_VERIFICATION", "false")
+    off = submit(client, contact_email="other@acme.example", github_username="other-dev").json()
+    assert off["verification_required"] is False and len(outbox) == 1       # no email attempted when verification is off

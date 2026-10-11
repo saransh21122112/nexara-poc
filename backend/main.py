@@ -158,8 +158,10 @@ def put_provider(body: ProviderIn):
 def create_request(body: RequestIn, request: Request, background: BackgroundTasks):
     limit("req", client_ip(request), int(os.environ.get("REQUESTS_PER_HOUR_PER_IP", "20")), 3600, "requests from this address")
     r = dbm.create_request(body.model_dump())
-    background.add_task(verification.send_safely, r)       # same response whether or not mail is configured (no oracle)
-    return {"request_id": r["id"], "message": "Request received", "request": r}
+    required = delivery_service.verification_required()
+    if required:
+        background.add_task(verification.send_safely, r)   # same response whether or not mail is configured (no oracle)
+    return {"request_id": r["id"], "message": "Request received", "verification_required": required, "request": r}
 
 
 @app.post("/api/verify")

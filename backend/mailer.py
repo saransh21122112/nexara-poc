@@ -26,9 +26,10 @@ def mode() -> str:
 
 
 def status() -> dict:
+    from .delivery_service import verification_required
     m = mode()
     ok = m == "log" or (m == "smtp" and bool(os.environ.get("SMTP_HOST")) and bool(os.environ.get("SMTP_FROM")))
-    return {"mode": m, "configured": ok, "from": os.environ.get("SMTP_FROM") if m == "smtp" else None,
+    return {"verification_required": verification_required(), "mode": m, "configured": ok, "from": os.environ.get("SMTP_FROM") if m == "smtp" else None,
             "issue": None if ok else "Set SMTP_HOST and SMTP_FROM (and SMTP_USER/SMTP_PASSWORD), or MAIL_MODE=log for local development."}
 
 

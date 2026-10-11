@@ -10,7 +10,7 @@ $("#lf").onsubmit=async e=>{e.preventDefault();$("#lerr").hidden=true;try{const 
 $("#signout").onclick=logout;
 document.querySelectorAll("button.nav").forEach(b=>b.onclick=()=>go(b.dataset.v));
 function go(v){VIEW=v;document.querySelectorAll("button.nav").forEach(b=>b.classList.toggle("on",b.dataset.v===v));render()}
-async function loadGh(){try{const g=await api("/github/status"),m=await api("/mail/status");$("#ghnote").textContent=(g.ok?`GitHub: ${g.owner} ✓`:(g.configured?"GitHub: token problem":"GitHub: not configured"))+" · "+(m.configured?`Mail: ${m.mode} ✓`:"Mail: not configured");$("#ghnote").title=[g.issue,m.issue].filter(Boolean).join(" | ")}catch{}}
+async function loadGh(){try{const g=await api("/github/status"),m=await api("/mail/status");$("#ghnote").textContent=(g.ok?`GitHub: ${g.owner} ✓`:(g.configured?"GitHub: token problem":"GitHub: not configured"))+" · "+(m.verification_required?(m.configured?`Mail: ${m.mode} ✓`:"Mail: not configured"):"Email verification OFF");$("#ghnote").title=[g.issue,m.verification_required?m.issue:"REQUIRE_EMAIL_VERIFICATION=false: requests are not email-verified"].filter(Boolean).join(" | ")}catch{}}
 async function start(){$("#login").hidden=true;$("#app").hidden=false;await loadProv();loadGh();render()}
 async function loadProv(){PROV=await api("/provider");const L={anthropic:"Anthropic API",openai:"OpenAI API",claude_subscription:"Claude subscription (local demo only)"};
  $("#prov").innerHTML=Object.entries(PROV.providers).map(([k,v])=>`<option value="${k}" ${k===PROV.current?"selected":""}>${L[k]}${v.configured?"":" - not configured"}</option>`).join("");

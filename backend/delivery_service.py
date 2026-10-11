@@ -2,6 +2,7 @@
 Rules: every outward action (create repo, push, invite) is explicit (the API requires confirm=true); nothing the customer or an
 engineer edited by hand is silently overwritten (per-file blob SHAs from the last sync are compared with the remote);
 a partial failure leaves the repo in `needs_retry` so a retry continues instead of creating a duplicate."""
+import os
 import threading
 
 from . import database as dbm
@@ -60,8 +61,13 @@ def invitee(customer: dict, request: dict, repo_exists: bool) -> tuple[str | Non
     return None, "No established GitHub user for this customer: add a collaborator explicitly once you have verified them." if ru else None
 
 
+def verification_required() -> bool:
+    """On by default. REQUIRE_EMAIL_VERIFICATION=false is an explicit operator opt-out (e.g. no SMTP yet); the preview then warns."""
+    return os.environ.get("REQUIRE_EMAIL_VERIFICATION", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
 def unverified_reason(request: dict) -> str | None:
-    if request.get("email_verified"):
+    if request.get("email_verified") or not verification_required():
         return None
     return (f"The email on this request ({request.get('contact_email')}) is not verified. The requester must click the link we emailed "
             f"them, or you can verify them another way and record how (Client Requests -> Mark verified).")
@@ -127,6 +133,9 @@ def preview(gh: GitHubClient, agent_id: str, support_email: str = "") -> dict:
         warnings.append("No GitHub username on file: the customer cannot be invited.")
     user, blocked = invitee(customer, request, bool(repo))
     unverified = unverified_reason(request)
+    if not request.get("email_verified") and not verification_required():
+        warnings.append("Email verification is switched OFF (REQUIRE_EMAIL_VERIFICATION=false): nobody has confirmed that "
+                        f"{request.get('contact_email')} belongs to the requester. Check this request really comes from this customer.")
     if blocked:
         warnings.append(blocked)
     if repo and (request.get("contact_email") or "").lower() != (customer.get("contact_email") or "").lower():

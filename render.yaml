@@ -24,6 +24,8 @@ services:
         sync: false                  # token that can create private repos under GITHUB_OWNER (dashboard only, never commit)
       - key: GITHUB_OWNER
         sync: false                  # GitHub user or org that owns the customer repos
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: "false"               # TEMPORARY: no SMTP yet. Delete this line (default is true) once SMTP_* are set, so requesters must confirm their email
       - key: SMTP_HOST
         sync: false                  # SMTP server for the confirmation emails (with SMTP_USER, SMTP_PASSWORD, SMTP_FROM set in the dashboard)
       - key: SMTP_FROM
