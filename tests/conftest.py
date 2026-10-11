@@ -24,7 +24,7 @@ def client(tmp_path, monkeypatch):
         from backend import database
         database.init_db()
         with database.db() as cx:
-            cx.execute("TRUNCATE api_keys, dispatches, eval_runs, runs, agents, requests CASCADE")
+            cx.execute("TRUNCATE email_verifications, repo_events, repo_agents, repos, customers, eval_runs, runs, agents, requests CASCADE")
     with TestClient(app) as c:
         tok = c.post("/api/factory/login", json={"password": "nexara-demo"}).json()["token"]
         c.headers["X-Factory-Token"] = tok

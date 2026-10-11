@@ -9,13 +9,14 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response  # noqa: E402
-from pydantic import BaseModel, Field  # noqa: E402
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from . import agent_service, database as dbm, dispatch, export, providers  # noqa: E402
-from .models import AGENT_TYPES, AgentSpec, LoginIn, ProviderIn, RequestIn, RunIn  # noqa: E402
+from . import agent_service, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
+from .github_client import GitHubClient, GitHubError, NotConfigured as GitHubNotConfigured  # noqa: E402
+from .models import (AGENT_TYPES, AgentSpec, AttachIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
+                     ManualVerifyIn, ProviderIn, RequestIn, RunIn, SyncIn, VerifyIn)
 from .providers import NotConfigured, UpstreamError  # noqa: E402
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
@@ -25,6 +26,7 @@ TOKENS: set[str] = set()  # DEMO AUTH ONLY: in-memory tokens, not production sec
 @asynccontextmanager
 async def lifespan(_):
     dbm.init_db()
+    dbm.backfill_customers()
     yield
 
 
@@ -45,6 +47,29 @@ async def _nc(_, e):
 async def _up(_, e):
     return Response(status_code=502, media_type="application/json",
                     content=__import__("json").dumps({"detail": str(e), "code": "upstream_error"}))
+
+
+@app.exception_handler(delivery_service.DeliveryError)
+async def _de(_, e):
+    body = {"detail": str(e), "code": "conflict" if isinstance(e, delivery_service.Conflict) else "delivery_error"}
+    if isinstance(e, delivery_service.Conflict):
+        body["conflicts"] = e.conflicts
+    return Response(status_code=e.status, media_type="application/json", content=__import__("json").dumps(body))
+
+
+@app.exception_handler(GitHubError)
+async def _gh(_, e):
+    status = 503 if isinstance(e, GitHubNotConfigured) else (409 if e.code in ("repo_exists", "branch_moved") else 502)
+    return Response(status_code=status, media_type="application/json", content=__import__("json").dumps({"detail": str(e), "code": e.code}))
+
+
+def get_github() -> GitHubClient:
+    return GitHubClient()  # reads GITHUB_TOKEN / GITHUB_OWNER / GITHUB_API_URL on every call
+
+
+def _confirmed(confirm: bool, what: str):
+    if not confirm:
+        raise HTTPException(400, f"This will {what}. Send confirm=true to proceed.")
 
 
 _buckets: dict[str, collections.deque] = {}  # ponytail: in-memory per-process limiter, use Redis if scaled out
@@ -100,9 +125,8 @@ async def no_cache_static(request, call_next):
 
 
 @app.get("/api/health")
-def health(request: Request):
-    return {"status": "ok", "client_ip": client_ip(request),  # the caller's own address as the rate limiter sees it
-            "agent_types": AGENT_TYPES, "public_base_url": os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL", ""), **providers.status()}
+def health():
+    return {"status": "ok", "agent_types": AGENT_TYPES, "github_configured": get_github().configured, **providers.status()}
 
 
 @app.post("/api/factory/login")
@@ -131,10 +155,59 @@ def put_provider(body: ProviderIn):
 
 
 @app.post("/api/requests", status_code=201)
-def create_request(body: RequestIn, request: Request):
+def create_request(body: RequestIn, request: Request, background: BackgroundTasks):
     limit("req", client_ip(request), int(os.environ.get("REQUESTS_PER_HOUR_PER_IP", "20")), 3600, "requests from this address")
     r = dbm.create_request(body.model_dump())
+    background.add_task(verification.send_safely, r)       # same response whether or not mail is configured (no oracle)
     return {"request_id": r["id"], "message": "Request received", "request": r}
+
+
+@app.post("/api/verify")
+def verify_email(body: VerifyIn, request: Request):
+    """Public: the requester confirms their address with the token from the emailed link (single use, expires)."""
+    limit("verify", client_ip(request), 20, 3600, "confirmation attempts")
+    if not verification.confirm(body.token):
+        raise HTTPException(400, "This link is invalid, already used, or has expired.")   # one message for every failure: no oracle
+    return {"ok": True}
+
+
+@app.get("/verify")
+def verify_page():
+    return FileResponse(FRONTEND / "verify.html")
+
+
+@app.get("/api/mail/status", dependencies=[Depends(factory_auth)])
+def mail_status():
+    return mailer.status()
+
+
+@app.post("/api/requests/{request_id}/resend-verification", dependencies=[Depends(factory_auth)])
+def resend_verification(request_id: str, body: ConfirmIn):
+    r = dbm.get_request(request_id)
+    if not r:
+        raise HTTPException(404, f"Request {request_id} not found")
+    if r.get("email_verified"):
+        raise HTTPException(409, "This email is already verified.")
+    _confirmed(body.confirm, f"email a confirmation link to {r['contact_email']}")
+    try:
+        mode = verification.send_verification(r)
+    except verification.VerificationLimit as e:
+        raise HTTPException(429, str(e))
+    except mailer.MailNotConfigured as e:
+        raise HTTPException(503, f"Email is not configured: {e}")
+    except mailer.MailError as e:
+        raise HTTPException(502, str(e))
+    if r.get("customer_id"):
+        dbm.add_event(r["customer_id"], "verification_sent", {"request": request_id, "mode": mode, "by": "staff"})
+    return {"status": mode}
+
+
+@app.post("/api/requests/{request_id}/verify-manually", dependencies=[Depends(factory_auth)])
+def verify_manually(request_id: str, body: ManualVerifyIn):
+    if not dbm.get_request(request_id):
+        raise HTTPException(404, f"Request {request_id} not found")
+    _confirmed(body.confirm, "record that you verified this requester yourself (your note is saved in the customer's timeline)")
+    return dbm.mark_email_verified(request_id, "staff", body.note.strip())
 
 
 @app.get("/api/requests", dependencies=[Depends(factory_auth)])
@@ -185,117 +258,85 @@ async def evaluate_agent(agent_id: str):
     return await agent_service.evaluate(_agent_or_404(agent_id))
 
 
-@app.get("/api/agents/{agent_id}/export", dependencies=[Depends(factory_auth)])
-def export_agent(agent_id: str, format: str = "portable"):
-    spec = _agent_or_404(agent_id)["spec"]
-    if format not in ("crewai", "portable"):
-        raise HTTPException(422, "format must be 'crewai' or 'portable'")
-    data = (export.crewai_bundle if format == "crewai" else export.portable_bundle)(spec)
-    return Response(data, media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{agent_id}-{format}.zip"'})
+# ---- delivery: one private GitHub repo per customer (see delivery_service) ----
+SUPPORT_EMAIL = lambda: os.environ.get("SUPPORT_EMAIL", "")
 
 
-@app.post("/api/agents/{agent_id}/dispatch", status_code=201, dependencies=[Depends(factory_auth)])
-def dispatch_agent(agent_id: str):
-    """Prepares a package + DRAFT email. Never sends anything; a human sends it and then calls mark-sent."""
-    agent = _agent_or_404(agent_id)
-    req = dbm.get_request(agent["request_id"])
-    return dbm.create_dispatch(agent, dispatch.email_draft(agent["spec"], req))
+@app.get("/api/github/status", dependencies=[Depends(factory_auth)])
+def github_status():
+    return get_github().status()
 
 
-@app.get("/api/agents/{agent_id}/dispatches", dependencies=[Depends(factory_auth)])
-def agent_dispatches(agent_id: str):
+@app.get("/api/agents/{agent_id}/delivery-preview", dependencies=[Depends(factory_auth)])
+def delivery_preview(agent_id: str):
     _agent_or_404(agent_id)
-    return dbm.list_dispatches(agent_id)
+    return delivery_service.preview(get_github(), agent_id, SUPPORT_EMAIL())
 
 
-def _dispatch_or_404(did: str) -> dict:
-    d = dbm.get_dispatch(did)
-    if not d:
-        raise HTTPException(404, f"Dispatch {did} not found")
-    return d
+@app.post("/api/agents/{agent_id}/deliver", status_code=201, dependencies=[Depends(factory_auth)])
+def deliver(agent_id: str, body: DeliverIn):
+    _agent_or_404(agent_id)
+    _confirmed(body.confirm, "create/update the customer's private GitHub repository" + (" and invite them as a collaborator" if body.invite else ""))
+    limit("gh", "factory", 20, 60, "delivery actions")
+    return delivery_service.deliver(get_github(), agent_id, invite=body.invite, support_email=SUPPORT_EMAIL(), existing_repo_ack=body.existing_repo_ack)
 
 
-@app.get("/api/dispatches/{dispatch_id}", dependencies=[Depends(factory_auth)])
-def get_dispatch(dispatch_id: str):
-    return {k: v for k, v in _dispatch_or_404(dispatch_id).items() if k != "spec"}
+@app.post("/api/requests/{request_id}/attach-customer", dependencies=[Depends(factory_auth)])
+def attach_customer(request_id: str, body: AttachIn):
+    _confirmed(body.confirm, "link this request to an existing customer, so its agents can be delivered into that customer's repository")
+    return delivery_service.attach_request(request_id, body.customer_id)
 
 
-@app.get("/api/dispatches/{dispatch_id}/package", dependencies=[Depends(factory_auth)])
-def dispatch_package(dispatch_id: str):
-    d = _dispatch_or_404(dispatch_id)
-    company = dbm.get_request(d["request_id"])["company_name"]
-    return Response(dispatch.package(d["spec"], company), media_type="application/zip",
-                    headers={"Content-Disposition": f'attachment; filename="{dispatch_id}-agent-package.zip"'})
+@app.get("/api/customers", dependencies=[Depends(factory_auth)])
+def customers():
+    return dbm.list_customers()
 
 
-@app.post("/api/dispatches/{dispatch_id}/mark-sent", dependencies=[Depends(factory_auth)])
-def dispatch_mark_sent(dispatch_id: str):
-    _dispatch_or_404(dispatch_id)
-    return {k: v for k, v in dbm.mark_sent(dispatch_id).items() if k != "spec"}
+@app.get("/api/customers/{customer_id}", dependencies=[Depends(factory_auth)])
+def customer(customer_id: str):
+    return delivery_service.customer_view(customer_id)
 
 
-class KeyIn(BaseModel):
-    label: str = Field(default="Customer key", min_length=1, max_length=80)
+@app.post("/api/customers/{customer_id}/notes", status_code=201, dependencies=[Depends(factory_auth)])
+def customer_note(customer_id: str, body: NoteIn):
+    if not dbm.get_customer(customer_id):
+        raise HTTPException(404, "Customer not found")
+    repo = dbm.get_repo_for_customer(customer_id)
+    return dbm.add_event(customer_id, "note", body.text.strip(), repo["id"] if repo else None)
 
 
-@app.post("/api/dispatches/{dispatch_id}/keys", status_code=201, dependencies=[Depends(factory_auth)])
-def create_key(dispatch_id: str, body: KeyIn | None = None):
-    rec, secret = dbm.create_api_key(_dispatch_or_404(dispatch_id), (body or KeyIn()).label.strip())
-    return {**rec, "key": secret, "notice": "Copy this key now - it is stored only as a hash and cannot be shown again."}
+@app.post("/api/customers/{customer_id}/onboarding", dependencies=[Depends(factory_auth)])
+def customer_onboarding(customer_id: str, body: OnboardingIn):
+    if not dbm.get_customer(customer_id):
+        raise HTTPException(404, "Customer not found")
+    return dbm.set_onboarding(customer_id, body.step, body.value)
 
 
-@app.get("/api/dispatches/{dispatch_id}/keys", dependencies=[Depends(factory_auth)])
-def list_keys(dispatch_id: str):
-    _dispatch_or_404(dispatch_id)
-    return dbm.list_api_keys(dispatch_id)
+@app.post("/api/customers/{customer_id}/refresh", dependencies=[Depends(factory_auth)])
+def customer_refresh(customer_id: str):
+    limit("gh", "factory", 20, 60, "delivery actions")
+    return delivery_service.refresh(get_github(), customer_id)
 
 
-@app.post("/api/keys/{key_id}/revoke", dependencies=[Depends(factory_auth)])
-def revoke_key(key_id: str):
-    if not dbm.get_api_key(key_id):
-        raise HTTPException(404, f"Key {key_id} not found")
-    return dbm.revoke_api_key(key_id)
+@app.post("/api/customers/{customer_id}/sync", dependencies=[Depends(factory_auth)])
+def customer_sync(customer_id: str, body: SyncIn):
+    _confirmed(body.confirm, "push the latest agent versions to the customer's repository")
+    limit("gh", "factory", 20, 60, "delivery actions")
+    return delivery_service.sync(get_github(), customer_id, overwrite=body.overwrite_conflicts, support_email=SUPPORT_EMAIL())
 
 
-# ---- Customer-facing API (authenticated by a per-customer API key, not the factory token) ----
-RATE_PER_MIN = int(os.environ.get("CUSTOMER_API_RATE_PER_MIN", "30"))
-_hits: dict[str, collections.deque] = {}  # ponytail: in-memory per-process limiter, use Redis if scaled out
+@app.post("/api/customers/{customer_id}/reinvite", dependencies=[Depends(factory_auth)])
+def customer_reinvite(customer_id: str, body: ConfirmIn):
+    _confirmed(body.confirm, "send the customer a new GitHub invitation (GitHub emails them)")
+    limit("gh", "factory", 20, 60, "delivery actions")
+    return delivery_service.reinvite(get_github(), customer_id)
 
 
-def customer_key(authorization: str = Header(default="")):
-    secret = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
-    rec = dbm.find_active_key(secret) if secret.startswith("nxk_") else None
-    if not rec:
-        raise HTTPException(401, "Invalid, revoked or missing API key. Send 'Authorization: Bearer <key>'.")
-    q = _hits.setdefault(rec["id"], collections.deque())
-    cutoff = time.monotonic() - 60
-    while q and q[0] < cutoff:
-        q.popleft()
-    if len(q) >= RATE_PER_MIN:
-        raise HTTPException(429, f"Rate limit: {RATE_PER_MIN} requests per minute per key.")
-    q.append(time.monotonic())
-    return rec
-
-
-@app.get("/v1/agent")
-def v1_agent(key: dict = Depends(customer_key)):
-    spec = dbm.get_dispatch(key["dispatch_id"])["spec"]
-    return {k: spec[k] for k in ("agent_name", "purpose", "capabilities", "input_schema", "output_schema")}
-
-
-@app.post("/v1/run")
-async def v1_run(body: RunIn, key: dict = Depends(customer_key)):
-    if providers.get_provider() == "claude_subscription":
-        raise HTTPException(503, "The customer API is disabled while the Claude-subscription provider is selected "
-                                 "(subscription logins are for local demos only). Switch to the anthropic or openai provider.")
-    d = dbm.get_dispatch(key["dispatch_id"])  # runs the dispatched snapshot, not later edits
-    run = await agent_service.run_agent({"id": d["agent_id"], "spec": d["spec"]}, body.task, kind="api")
-    dbm.touch_key(key["id"])
-    if run["status"] != "success":
-        raise HTTPException(502, f"The agent could not complete the request (reference {run['id']}).")
-    return {"response": run["response"], "tool_calls": [{"tool": c["tool"], "args": c["args"], "ok": c.get("ok")} for c in run["tool_calls"]],
-            "latency_ms": run["latency_ms"], "reference": run["id"]}
+@app.post("/api/customers/{customer_id}/collaborators", status_code=201, dependencies=[Depends(factory_auth)])
+def customer_collaborator(customer_id: str, body: CollaboratorIn):
+    _confirmed(body.confirm, f"invite {body.username} to the customer's private repository (GitHub emails them)")
+    limit("gh", "factory", 20, 60, "delivery actions")
+    return delivery_service.add_collaborator(get_github(), customer_id, body.username)
 
 
 @app.get("/api/runs", dependencies=[Depends(factory_auth)])

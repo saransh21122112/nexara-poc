@@ -93,5 +93,5 @@ def run_tool(name: str, args: dict) -> dict:
         return {"ok": False, "error": "invalid arguments"}
     try:
         return {"ok": True, "output": REGISTRY[name][2](**args)}
-    except (ToolError, TypeError) as e:
+    except (ValueError, TypeError) as e:  # ToolError is a ValueError
         return {"ok": False, "error": str(e)}

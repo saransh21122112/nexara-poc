@@ -20,6 +20,18 @@ services:
         generateValue: true          # random; read it in the Render dashboard -> Environment
       - key: CLAUDE_CODE_OAUTH_TOKEN
         sync: false                  # TESTING ONLY: lets the factory use your Claude subscription (never commit this value)
+      - key: GITHUB_TOKEN
+        sync: false                  # token that can create private repos under GITHUB_OWNER (dashboard only, never commit)
+      - key: GITHUB_OWNER
+        sync: false                  # GitHub user or org that owns the customer repos
+      - key: SMTP_HOST
+        sync: false                  # SMTP server for the confirmation emails (with SMTP_USER, SMTP_PASSWORD, SMTP_FROM set in the dashboard)
+      - key: SMTP_FROM
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false                  # secret: dashboard only
       - key: ANTHROPIC_API_KEY
         sync: false                  # you paste this in the dashboard; customer API calls need it (or OPENAI_API_KEY)
 

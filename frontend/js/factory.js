@@ -1,16 +1,17 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-let TOKEN=sessionStorage.getItem("ft"),VIEW="overview",SEL={req:null,agent:null},PROV=null;
+let TOKEN=sessionStorage.getItem("ft"),VIEW="overview",SEL={req:null,agent:null,cust:null},PROV=null;
 async function api(path,opt={}){const r=await fetch("/api"+path,{...opt,headers:{"Content-Type":"application/json","X-Factory-Token":TOKEN||"",...(opt.headers||{})}});
  if(r.status===401&&path!=="/factory/login"){logout();throw new Error("Session expired")}
  if(opt.blob&&r.ok)return r.blob();const j=await r.json().catch(()=>({}));
- if(!r.ok){const d=j.detail;throw Object.assign(new Error(Array.isArray(d)?d.map(x=>x.loc.slice(1).join(".")+": "+x.msg).join("; "):d||"Request failed"),{status:r.status})}return j}
+ if(!r.ok){const d=j.detail;throw Object.assign(new Error(Array.isArray(d)?d.map(x=>x.loc.slice(1).join(".")+": "+x.msg).join("; "):d||"Request failed"),{status:r.status,body:j})}return j}
 function logout(){sessionStorage.removeItem("ft");TOKEN=null;$("#app").hidden=true;$("#login").hidden=false}
 $("#lf").onsubmit=async e=>{e.preventDefault();$("#lerr").hidden=true;try{const j=await api("/factory/login",{method:"POST",body:JSON.stringify({password:$("#pw").value})});$("#lerr").textContent="";TOKEN=j.token;sessionStorage.setItem("ft",TOKEN);start()}catch(x){$("#lerr").textContent=x.message;$("#lerr").hidden=false}};
 $("#signout").onclick=logout;
 document.querySelectorAll("button.nav").forEach(b=>b.onclick=()=>go(b.dataset.v));
 function go(v){VIEW=v;document.querySelectorAll("button.nav").forEach(b=>b.classList.toggle("on",b.dataset.v===v));render()}
-async function start(){$("#login").hidden=true;$("#app").hidden=false;await loadProv();render()}
+async function loadGh(){try{const g=await api("/github/status"),m=await api("/mail/status");$("#ghnote").textContent=(g.ok?`GitHub: ${g.owner} ✓`:(g.configured?"GitHub: token problem":"GitHub: not configured"))+" · "+(m.configured?`Mail: ${m.mode} ✓`:"Mail: not configured");$("#ghnote").title=[g.issue,m.issue].filter(Boolean).join(" | ")}catch{}}
+async function start(){$("#login").hidden=true;$("#app").hidden=false;await loadProv();loadGh();render()}
 async function loadProv(){PROV=await api("/provider");const L={anthropic:"Anthropic API",openai:"OpenAI API",claude_subscription:"Claude subscription (local demo only)"};
  $("#prov").innerHTML=Object.entries(PROV.providers).map(([k,v])=>`<option value="${k}" ${k===PROV.current?"selected":""}>${L[k]}${v.configured?"":" - not configured"}</option>`).join("");
  const c=PROV.providers[PROV.current];$("#provnote").textContent=c.configured?c.model:"";$("#provnote").title=c.issue||""}
@@ -18,20 +19,29 @@ $("#prov").onchange=async e=>{PROV=await api("/provider",{method:"PUT",body:JSON
 function cfgBanner(){const c=PROV.providers[PROV.current];return c.configured?"":`<div class="bad"><b>Provider not configured.</b> ${esc(c.issue)} Or switch provider in the header.</div>`}
 const fmt=t=>t?new Date(t).toLocaleString():"";
 async function render(){const v=$("#view");v.innerHTML='<p class="muted">Loading...</p>';
- try{await ({overview,requests,builder,playground}[VIEW])(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
+ try{await ({overview,requests,customers,builder,playground}[VIEW])(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
 
 async function overview(v){const s=await api("/stats");
  v.innerHTML=`<h2>Overview</h2><p class="muted">Live counts from the database.</p><div class="tiles">
  <div class="tile"><div class="n">${s.total_requests}</div>Client requests</div><div class="tile"><div class="n">${s.agents_generated}</div>Agents generated</div>
- <div class="tile"><div class="n">${s.agents_tested}</div>Agents tested</div><div class="tile"><div class="n">${s.agents_dispatched}</div>Agents dispatched</div></div>
+ <div class="tile"><div class="n">${s.agents_tested}</div>Agents tested</div><div class="tile"><div class="n">${s.agents_delivered}</div>Agents delivered</div><div class="tile"><div class="n">${s.customers}</div>Customers</div></div>
  <div class="panel"><h3>Recent activity</h3>${s.recent_activity.length?`<table>${s.recent_activity.map(a=>`<tr><td><span class="tag">${a.type}</span>${esc(a.text)}</td><td class="muted">${fmt(a.at)}</td></tr>`).join("")}</table>`:'<div class="empty">No activity yet. Submit a request on the public site to begin.</div>'}</div>`}
 
-async function requests(v){const rs=await api("/requests");if(!SEL.req&&rs[0])SEL.req=rs[0].id;
+async function requests(v){const [rs,cs]=await Promise.all([api("/requests"),api("/customers")]);if(!SEL.req&&rs[0])SEL.req=rs[0].id;
  v.innerHTML=`<h2>Client Requests</h2><p class="muted">${rs.length} submitted</p>${rs.length?`<div class="split"><div>${rs.map(r=>`<div class="item ${r.id===SEL.req?"on":""}" data-id="${r.id}"><b>${esc(r.company_name)}</b><br><small>${r.id} · ${esc(r.agent_type)}${r.agent_count?` · ${r.agent_count} agent(s)`:""}</small></div>`).join("")}</div><div class="panel" id="detail"></div></div>`:'<div class="empty">No requests yet. Open the public site and submit one.</div>'}`;
  if(!rs.length)return;const show=()=>{const r=rs.find(x=>x.id===SEL.req)||rs[0];
   $("#detail").innerHTML=`<h3>${esc(r.company_name)} <span class="tag">${esc(r.agent_type)}</span></h3><p class="muted">${r.id} · ${fmt(r.created_at)}</p><dl>
-  ${[["Industry","industry"],["Business problem","business_problem"],["Tasks","tasks"],["Existing tools","existing_tools"],["Required output","required_output"],["Contact","contact_email"]].map(([l,k])=>`<dt>${l}</dt><dd>${esc(r[k])}</dd>`).join("")}</dl>
+  ${[["Industry","industry"],["Business problem","business_problem"],["Tasks","tasks"],["Existing tools","existing_tools"],["Required output","required_output"],["Contact","contact_email"],["GitHub","github_username"],["Claude","claude_status"],["OS","os"]].map(([l,k])=>`<dt>${l}</dt><dd>${esc(r[k])}</dd>`).join("")}</dl>
+  <div class="row" style="margin-top:12px"><span class="muted">Customer: <b>${esc((cs.find(c=>c.id===r.customer_id)||{}).company_name||"-")}</b> ${esc(r.customer_id||"")}</span><select id="att" style="max-width:420px">${cs.map(c=>`<option value="${c.id}" ${c.id===r.customer_id?"selected":""}>${esc(c.company_name)} · ${esc(c.contact_email)}${c.github_username?" · @"+esc(c.github_username):""} (${esc(c.id)})</option>`).join("")}</select><button class="btn sec" id="attb">Attach to this customer</button></div><div id="attc"></div>
+  <div class="row" style="margin-top:12px"><span class="muted">Requester email: ${r.email_verified?`<span class="tag ok">verified (${esc(r.email_verified_via||"")})</span>`:'<span class="tag fail">not verified</span>'}</span>${r.email_verified?"":'<button class="btn sec" id="vrs">Resend confirmation email</button><button class="btn sec" id="vmn">Mark verified...</button>'}</div><div id="vfc"></div>
   <div class="row" style="margin-top:16px"><button class="btn" id="gen">Build agent from this request</button>${r.agent_count?`<span class="muted">${r.agent_count} agent(s) already generated for this request</span>`:""}</div>`;
+  $("#attb").onclick=()=>{const to=$("#att").value;if(to===r.customer_id){$("#attc").innerHTML='<p class="muted">Already attached to that customer.</p>';return}
+   confirmBar($("#attc"),`Link request ${r.id} (from ${r.contact_email}) to the customer you selected. Its agents can then be delivered into THAT customer's repository. Only do this if you have verified they are the same company.`,"Attach",async()=>{try{await api(`/requests/${r.id}/attach-customer`,{method:"POST",body:JSON.stringify({customer_id:to,confirm:true})});requests(v)}catch(e){$("#attc").innerHTML=`<div class="bad">${esc(e.message)}</div>`}})};
+  if($("#vrs")){
+   $("#vrs").onclick=()=>confirmBar($("#vfc"),`This emails a confirmation link to ${r.contact_email}.`,"Send email",async()=>{try{const x=await api(`/requests/${r.id}/resend-verification`,{method:"POST",body:JSON.stringify({confirm:true})});$("#vfc").innerHTML=`<p class="muted">${x.status==="logged"?"Logged to the server log (MAIL_MODE=log).":"Email sent."}</p>`}catch(e){$("#vfc").innerHTML=`<div class="bad">${esc(e.message)}</div>`}});
+   $("#vmn").onclick=()=>{$("#vfc").innerHTML=`<div class="row" style="margin-top:8px"><input id="vnote" placeholder="How did you verify them? (e.g. confirmed by phone on 11 Oct)" maxlength="500" style="max-width:520px"><button class="btn sec" id="vrev">Review</button></div>`;
+    $("#vrev").onclick=()=>{const n=$("#vnote").value.trim();if(n.length<5){$("#vnote").placeholder="Please write a few words about how you verified them";return}
+     confirmBar($("#vfc"),`Record that YOU verified ${r.contact_email} yourself (${n}). Agents can then be delivered for this request.`,"Mark verified",async()=>{try{await api(`/requests/${r.id}/verify-manually`,{method:"POST",body:JSON.stringify({confirm:true,note:n})});requests(v)}catch(e){$("#vfc").innerHTML=`<div class="bad">${esc(e.message)}</div>`}})}}}
   $("#gen").onclick=()=>{SEL.req=r.id;SEL.autogen=true;go("builder")}};
  show();document.querySelectorAll(".item").forEach(i=>i.onclick=()=>{SEL.req=i.dataset.id;document.querySelectorAll(".item").forEach(x=>x.classList.toggle("on",x===i));show()})}
 
@@ -62,41 +72,80 @@ function showSpec(a){const el=$("#spec");if(!a){el.innerHTML="";return}const s=a
  <label>Input schema (JSON)</label><textarea class="code" id="f_input_schema">${esc(J(s.input_schema))}</textarea>
  <label>Output schema (JSON)</label><textarea class="code" id="f_output_schema">${esc(J(s.output_schema))}</textarea>
  <label>Test scenarios (JSON: name, task, expected_behavior, must_contain[], must_call_tool)</label><textarea class="code" id="f_test_scenarios" style="min-height:200px">${esc(J(s.test_scenarios))}</textarea>
- <div id="serr"></div><div class="row" style="margin-top:16px"><button class="btn" id="save">Save Changes</button><button class="btn" id="dsp">Dispatch to customer</button><button class="btn sec" id="pg">Open in Playground</button>
- <button class="btn sec" data-ex="portable">Export: portable</button><button class="btn sec" data-ex="crewai">Export: CrewAI scaffold</button><span id="sok" class="muted"></span></div>
- <p class="muted" style="font-size:12px">Exports are starter scaffolds for client handover, not tested production deployments.</p></div><div id="dispatch"></div>`;
+ <div id="serr"></div><div class="row" style="margin-top:16px"><button class="btn" id="save">Save Changes</button><button class="btn" id="dlv">Deliver to customer repo</button><button class="btn sec" id="pg">Open in Playground</button><span id="sok" class="muted"></span></div>
+ <p class="muted" style="font-size:12px">Delivery creates a private GitHub repo for this customer (or adds to their existing one). Nothing happens until you confirm on the next screen.</p></div><div id="delivery"></div>`;
  $("#save").onclick=async()=>{$("#serr").innerHTML="";$("#sok").textContent="";const g=k=>$("#f_"+k).value,ls=k=>g(k).split("\n").map(x=>x.trim()).filter(Boolean);
   try{const spec={agent_name:g("agent_name"),purpose:g("purpose"),business_problem:g("business_problem"),instructions:g("instructions"),capabilities:ls("capabilities"),
    input_schema:JSON.parse(g("input_schema")),output_schema:JSON.parse(g("output_schema")),required_tools:ls("required_tools"),data_sources:ls("data_sources"),
    safety_restrictions:ls("safety_restrictions"),test_scenarios:JSON.parse(g("test_scenarios")),success_criteria:ls("success_criteria")};
    await api("/agents/"+a.id,{method:"PUT",body:JSON.stringify(spec)});$("#sok").textContent="Saved ✓"}catch(e){$("#serr").innerHTML=`<div class="bad">${e instanceof SyntaxError?"Invalid JSON: ":""}${esc(e.message)}</div>`}};
  $("#pg").onclick=()=>go("playground");
- const dl=async(path,name)=>{const blob=await api(path,{blob:true});const u=URL.createObjectURL(blob),l=document.createElement("a");l.href=u;l.download=name;l.click();URL.revokeObjectURL(u)};
- const loadKeys=async d=>{const ks=await api(`/dispatches/${d.id}/keys`);const h=await fetch("/api/health").then(r=>r.json());const base=h.public_base_url||location.origin;
-  const sub=PROV.current==="claude_subscription";
-  $("#keys").innerHTML=`<h3>Customer API access</h3><p class="muted">Give the customer a key to call this agent on Nexara's server: <code>POST ${esc(base)}/v1/run</code>. Keys are shown once and stored only as a hash.</p>
-  ${sub?'<div class="warn" style="background:#2a2108;border:1px solid #6b5416;color:#f5d98a;border-radius:8px;padding:10px 12px;font-size:13px;margin:10px 0">The customer API is <b>disabled</b> while the Claude-subscription provider is selected (local demo only). Switch to the Anthropic or OpenAI provider in the header.</div>':""}
-  ${/localhost|127\.0\.0\.1/.test(base)?'<div class="warn" style="background:#2a2108;border:1px solid #6b5416;color:#f5d98a;border-radius:8px;padding:10px 12px;font-size:13px;margin:10px 0">This server is on <b>localhost</b>, so a customer cannot reach it. Deploy it publicly and set PUBLIC_BASE_URL, or use the package instead.</div>':""}
-  <div class="row"><input id="k_label" placeholder="Label, e.g. Acme production" style="max-width:300px" maxlength="80"><button class="btn" id="k_new">Create API key</button><span id="k_msg" class="muted"></span></div><div id="k_new_box"></div>
-  ${ks.length?`<table style="margin-top:12px"><tr><th>Label</th><th>Key</th><th>Calls</th><th>Last used</th><th>Status</th><th></th></tr>${ks.map(k=>`<tr><td>${esc(k.label)}</td><td><code>${esc(k.prefix)}…</code></td><td>${k.request_count}</td><td class="muted">${k.last_used_at?fmt(k.last_used_at):"never"}</td><td><span class="tag ${k.revoked_at?"fail":"ok"}">${k.revoked_at?"revoked":"active"}</span></td><td>${k.revoked_at?"":`<button class="btn sec" data-rev="${k.id}">Revoke</button>`}</td></tr>`).join("")}</table>`:'<p class="muted">No keys yet.</p>'}`;
-  $("#k_new").onclick=async()=>{$("#k_new").disabled=true;try{const k=await api(`/dispatches/${d.id}/keys`,{method:"POST",body:JSON.stringify({label:$("#k_label").value.trim()||"Customer key"})});
-    const curl=`curl -s ${base}/v1/run -H "Authorization: Bearer ${k.key}" -H "Content-Type: application/json" -d '{"task": "your task here"}'`;
-    await loadKeys(d);$("#k_new_box").innerHTML=`<div class="panel" style="border-color:var(--lime)"><b>New key - copy it now, it will not be shown again</b><pre id="k_val">${esc(k.key)}</pre><pre>${esc(curl)}</pre><button class="btn sec" id="k_copy">Copy key</button> <button class="btn sec" id="k_copycurl">Copy curl example</button></div>`;
-    $("#k_copy").onclick=()=>navigator.clipboard.writeText(k.key).then(()=>$("#k_copy").textContent="Copied");$("#k_copycurl").onclick=()=>navigator.clipboard.writeText(curl).then(()=>$("#k_copycurl").textContent="Copied")}
-   catch(e){$("#k_msg").textContent=e.message;$("#k_new").disabled=false}};
-  $("#keys").querySelectorAll("[data-rev]").forEach(b=>b.onclick=async()=>{if(!confirm("Revoke this key? The customer's calls will start failing immediately."))return;try{await api(`/keys/${b.dataset.rev}/revoke`,{method:"POST"});loadKeys(d)}catch(e){$("#k_msg").textContent=e.message}})};
- const drawDispatch=d=>{const sent=d.status==="sent";$("#dispatch").innerHTML=`<div class="panel"><h3>Dispatch ${d.id} <span class="tag ${sent?"ok":""}">${sent?"marked sent "+fmt(d.sent_at):"draft - not sent"}</span></h3>
-  <p class="muted">Nexara never sends this automatically. Review the email, attach the package, send it yourself, then mark it as sent.</p>
-  <label>To</label><input id="d_to" value="${esc(d.to_email)}"><label>Subject</label><input id="d_sub" value="${esc(d.subject)}"><label>Body (editable draft)</label><textarea id="d_body" style="min-height:240px">${esc(d.body)}</textarea>
-  <div class="row" style="margin-top:12px"><button class="btn" id="d_pkg">Download package (.zip)</button><button class="btn sec" id="d_copy">Copy email</button><button class="btn sec" id="d_mail">Open in my mail app</button>${sent?"":'<button class="btn sec" id="d_sent">I sent it - mark as sent</button>'}<span id="d_msg" class="muted"></span></div></div><div class="panel" id="keys"></div>`;
-  loadKeys(d);
-  $("#d_pkg").onclick=()=>dl(`/dispatches/${d.id}/package`,`${d.id}-agent-package.zip`).catch(e=>$("#d_msg").textContent=e.message);
-  $("#d_copy").onclick=async()=>{try{await navigator.clipboard.writeText(`To: ${$("#d_to").value}\nSubject: ${$("#d_sub").value}\n\n${$("#d_body").value}`);$("#d_msg").textContent="Copied"}catch{$("#d_msg").textContent="Copy failed - select the text manually"}};
-  $("#d_mail").onclick=()=>{location.href=`mailto:${encodeURIComponent($("#d_to").value)}?subject=${encodeURIComponent($("#d_sub").value)}&body=${encodeURIComponent($("#d_body").value)}`};
-  if(!sent)$("#d_sent").onclick=async()=>{try{drawDispatch({...d,...await api(`/dispatches/${d.id}/mark-sent`,{method:"POST"})})}catch(e){$("#d_msg").textContent=e.message}}};
- $("#dsp").onclick=async()=>{$("#dsp").disabled=true;try{drawDispatch(await api(`/agents/${a.id}/dispatch`,{method:"POST"}))}catch(e){$("#serr").innerHTML=`<div class="bad">${esc(e.message)}</div>`}$("#dsp").disabled=false};
- api(`/agents/${a.id}/dispatches`).then(ds=>{if(ds.length&&!$("#dispatch").innerHTML)$("#dispatch").innerHTML=`<div class="panel"><h3>Previous dispatches</h3><table>${ds.map(x=>`<tr><td>${x.id}</td><td><span class="tag ${x.status==="sent"?"ok":""}">${x.status}</span></td><td class="muted">${esc(x.to_email)} · ${fmt(x.created_at)}</td><td><button class="btn sec" data-open="${x.id}">Open</button></td></tr>`).join("")}</table></div>`;$("#dispatch").querySelectorAll("[data-open]").forEach(b=>b.onclick=async()=>drawDispatch(await api(`/dispatches/${b.dataset.open}`)))}).catch(()=>{});
- el.querySelectorAll("[data-ex]").forEach(b=>b.onclick=async()=>{try{const blob=await api(`/agents/${a.id}/export?format=${b.dataset.ex}`,{blob:true});const u=URL.createObjectURL(blob),l=document.createElement("a");l.href=u;l.download=`${a.id}-${b.dataset.ex}.zip`;l.click();URL.revokeObjectURL(u)}catch(e){$("#serr").innerHTML=`<div class="bad">${esc(e.message)}</div>`}})}
+ $("#dlv").onclick=()=>showDelivery(a);
+}
+
+// ---------- delivery: preview -> explicit confirm -> private GitHub repo ----------
+const ghNote=()=>fetch("/api/health").then(r=>r.json()).then(h=>h.github_configured);
+async function showDelivery(a){const box=$("#delivery");box.innerHTML='<div class="panel"><p class="muted">Checking GitHub...</p></div>';
+ let p;try{p=await api(`/agents/${a.id}/delivery-preview`)}catch(e){box.innerHTML=`<div class="panel"><div class="bad">${e.status===503?"<b>GitHub is not configured.</b> ":""}${esc(e.message)}</div></div>`;return}
+ const label={create:"Create a private repository and deliver",add:"Add this agent to the customer's existing repository",update:"This agent is already in the repository: use Sync on the Customers page"}[p.mode];
+ box.innerHTML=`<div class="panel"><h3>Deliver: ${esc(p.customer.company_name)}</h3><p class="muted">${esc(label)}. Nothing is created until you press the confirm button.</p>
+  <dl><dt>Repository</dt><dd><b>${esc(p.repo.owner)}/${esc(p.repo.name)}</b> <span class="tag">private</span> ${p.repo.exists?'<span class="tag ok">exists</span>':'<span class="tag">will be created</span>'}</dd>
+  <dt>Request from</dt><dd>${esc(p.request.id)} · ${esc(p.request.contact_email)} · ${p.request.github_username?"@"+esc(p.request.github_username):"no GitHub user"}<br><span class="muted">${esc(p.request.problem)}</span></dd>
+  <dt>Plugin</dt><dd>/${esc(p.plugin_slug)}</dd>
+  <dt>GitHub invite</dt><dd>${p.invite.blocked_reason?`<span class="tag fail">no invitation will be sent</span><br><span class="muted">${esc(p.invite.blocked_reason)}</span>`:p.invite.username?`@${esc(p.invite.username)} - ${p.invite.will_invite?"will be invited":"already invited"}<br><span class="muted">${esc(p.invite.access)}. GitHub emails the invitation.</span>`:"No GitHub username on file - nobody will be invited"}</dd>
+  <dt>Customer Claude</dt><dd>${esc(p.customer.claude_status||"unknown")}${p.customer.os?" / "+esc(p.customer.os):""}</dd></dl>
+  ${p.blocked.map(b=>`<div class="bad"><b>Cannot deliver yet.</b> ${esc(b)}</div>`).join("")}
+  ${p.warnings.map(w=>`<div class="warn">${esc(w)}</div>`).join("")}
+  <details style="margin:10px 0"><summary>${p.files.length} files will be written</summary><pre>${esc(p.files.join("\n"))}</pre></details>
+  <label>Onboarding message (a draft for you to send - the system never emails the customer)</label><textarea id="ob" style="min-height:220px">${esc(p.onboarding_draft)}</textarea>
+  <div class="row" style="margin-top:12px">${p.mode==="update"?"":`<label style="margin:0;text-transform:none"><input type="checkbox" id="inv" style="width:auto" ${p.invite.will_invite?"checked":""} ${p.invite.username?"":"disabled"}> send the GitHub invitation</label>
+   <button class="btn" id="go1">${p.mode==="create"?"Create repo and deliver":"Add to repo"}</button>`}<button class="btn sec" id="cp">Copy onboarding message</button><span id="dmsg" class="muted"></span></div><div id="dres"></div></div>`;
+ $("#cp").onclick=()=>navigator.clipboard.writeText($("#ob").value).then(()=>$("#dmsg").textContent="Copied",()=>$("#dmsg").textContent="Copy failed - select the text manually");
+ if(!$("#go1"))return;if(p.blocked.length){$("#go1").disabled=true;$("#go1").title=p.blocked[0]}
+ $("#go1").onclick=()=>confirmBar($("#dres"),`${p.mode==="add"?`This adds to the EXISTING repository of ${p.customer.company_name}, based on a request from ${p.request.contact_email}${p.request.github_username?" (@"+p.request.github_username+")":""}. Only continue if you have checked it really comes from this customer. `:""}This will ${p.mode==="create"?`create the PRIVATE repository ${p.repo.owner}/${p.repo.name}`:`push a new commit to ${p.repo.owner}/${p.repo.name}`}${$("#inv")&&$("#inv").checked?` and email a GitHub invitation to @${p.invite.username}`:""}.`,"Yes, do it",async()=>{
+  $("#go1").disabled=true;try{const r=await api(`/agents/${a.id}/deliver`,{method:"POST",body:JSON.stringify({confirm:true,invite:!!($("#inv")&&$("#inv").checked),existing_repo_ack:p.mode==="add"})});
+   $("#dres").innerHTML=`<div class="ok-box"><b>${r.status==="pushed"?"Delivered":"Already up to date"}.</b> <a href="${esc(r.repo.url)}" target="_blank" rel="noopener">${esc(r.repo.owner)}/${esc(r.repo.name)}</a> · commit ${esc(r.commit.slice(0,7))} · ${r.changed.length} files
+    ${r.invite?`<br>Invite: ${esc(r.invite.status)}${r.invite.error?" - "+esc(r.invite.error):""}`:"<br>No invitation sent."}
+    <div class="row" style="margin-top:8px"><button class="btn" id="tocust">Open customer page</button></div></div>`;
+   $("#tocust").onclick=()=>{SEL.cust=p.customer.id;go("customers")}}
+  catch(e){$("#go1").disabled=false;$("#dres").innerHTML=`<div class="bad">${e.status===503?"<b>GitHub is not configured.</b> ":""}${esc(e.message)}${e.body&&e.body.conflicts?"<pre>"+esc(e.body.conflicts.map(c=>c.path+": "+c.why).join("\n"))+"</pre>":""}</div>`}})}
+
+function confirmBar(el,text,yesLabel,onYes){el.innerHTML=`<div class="warn" style="margin-top:12px"><b>Confirm.</b> ${esc(text)}<div class="row" style="margin-top:8px"><button class="btn" id="cb_yes">${esc(yesLabel)}</button><button class="btn sec" id="cb_no">Cancel</button></div></div>`;
+ $("#cb_no").onclick=()=>el.innerHTML="";$("#cb_yes").onclick=()=>{el.innerHTML="";onYes()}}
+
+// ---------- customers ----------
+const STATUS={have_claude_code:"has Claude Code",have_claude_account:"has a Claude account",no_claude:"no Claude yet",not_sure:"not sure"};
+const invTag=s=>`<span class="tag ${s==="accepted"?"ok":(s==="expired"||s==="failed")?"fail":""}">invite: ${esc(s||"none")}</span>`;
+async function customers(v){const cs=await api("/customers");if(!SEL.cust&&cs[0])SEL.cust=cs[0].id;if(SEL.cust&&!cs.find(c=>c.id===SEL.cust))SEL.cust=cs[0]?.id||null;
+ v.innerHTML=`<h2>Customers</h2><p class="muted">One private GitHub repository per company. ${cs.length} customer(s).</p>${cs.length?`<div class="split"><div>${cs.map(c=>`<div class="item ${c.id===SEL.cust?"on":""}" data-id="${c.id}"><b>${esc(c.company_name)}</b><br><small>${c.repo?esc(c.repo.owner+"/"+c.repo.name):"no repo yet"} · ${c.delivered_agents} agent(s) · ${c.requests} request(s)</small><br>${c.repo?invTag(c.repo.invite_status):""}</div>`).join("")}</div><div id="cdetail"></div></div>`:'<div class="empty">No customers yet. They appear when someone submits a request.</div>'}`;
+ if(!cs.length)return;v.querySelectorAll(".item").forEach(i=>i.onclick=()=>{SEL.cust=i.dataset.id;customers(v)});await customerDetail(SEL.cust,null)}
+
+async function customerDetail(id,live){const d=await api(`/customers/${id}`);const c=d.customer,r=d.repo,el=$("#cdetail");
+ const ob=c.onboarding||{};const inv=live?live.invite_status:(r&&r.invite_status);
+ const step=(label,done,key)=>`<label style="display:flex;gap:8px;align-items:center;margin:4px 0;text-transform:none;font-size:14px;color:var(--text)"><input type="checkbox" style="width:auto" ${done?"checked":""} ${key?`data-ob="${key}"`:"disabled"}> ${label}</label>`;
+ el.innerHTML=`<div class="panel"><h3>${esc(c.company_name)} <span class="tag">${esc(c.id)}</span></h3>
+  <dl><dt>Contact</dt><dd>${esc(c.contact_email)}</dd><dt>GitHub</dt><dd>${c.github_username?"@"+esc(c.github_username):"-"}</dd><dt>Claude</dt><dd>${esc(STATUS[c.claude_status]||"unknown")}${c.os?" / "+esc(c.os):""}</dd>
+  <dt>Repository</dt><dd>${r?`<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.owner)}/${esc(r.name)}</a> <span class="tag">private</span> <span class="tag ${r.state==="ready"?"ok":"fail"}">${esc(r.state)}</span> ${invTag(inv)}${r.last_error?`<div class="bad">${esc(r.last_error)}</div>`:""}`:"none yet - deliver an agent from the Agent Builder"}</dd></dl>
+  ${r?`<div class="row" style="margin-top:12px"><button class="btn sec" id="rf">Refresh from GitHub</button><button class="btn" id="sy" ${d.agents.some(a=>a.behind)?"":"disabled"}>Sync to repo</button><button class="btn sec" id="ri">Re-send invite</button><button class="btn sec" id="ac">Invite another person</button><span id="cmsg" class="muted"></span></div><div id="cact"></div>`:""}</div>
+  ${r?`<div class="panel"><h3>Agents in this repo</h3><table><tr><th>Agent</th><th>Command</th><th>State</th></tr>${d.agents.map(a=>`<tr><td>${esc(a.agent_name)}</td><td><code>/${esc(a.plugin_slug)}</code></td><td>${a.behind?'<span class="tag fail">repo behind - sync</span>':'<span class="tag ok">up to date</span>'}</td></tr>`).join("")||'<tr><td colspan="3" class="muted">none</td></tr>'}</table></div>
+  <div class="panel"><h3>Onboarding</h3>${step("Repo created and agents pushed",true)}${step("Invitation accepted (detected from GitHub)",inv==="accepted")}${step("Customer connected their project / cloned the repo","cloned"in ob&&ob.cloned,"cloned")}${step("Customer used an agent","first_use"in ob&&ob.first_use,"first_use")}${step("Onboarding complete","done"in ob&&ob.done,"done")}</div>
+  <div class="panel" id="issues"><h3>Open issues</h3>${live?(live.issues.length?`<table>${live.issues.map(i=>`<tr><td><a href="${esc(i.url)}" target="_blank" rel="noopener">#${i.number} ${esc(i.title)}</a></td><td class="muted">${esc(i.user)}</td></tr>`).join("")}</table>`:'<p class="muted">No open issues.</p>'):'<p class="muted">Press "Refresh from GitHub" to load them.</p>'}${live&&live.manual_changes.length?`<div class="warn">Files changed by hand in the repo: <code>${live.manual_changes.map(esc).join(", ")}</code>. The next sync will ask before overwriting them.</div>`:""}${live&&live.errors.length?`<div class="bad">${live.errors.map(esc).join("<br>")}</div>`:""}</div>`:""}
+  <div class="panel"><h3>Requests</h3>${d.requests.map(q=>`<div>${esc(q.id)} · ${esc(q.agent_type)} · ${fmt(q.created_at)} · ${q.agent_count} agent(s) · ${q.email_verified?'<span class="tag ok">email verified</span>':'<span class="tag fail">email not verified</span>'}</div>`).join("")}<p class="muted">A new request from this company becomes another agent in the same repo.</p></div>
+  <div class="panel"><h3>Timeline and notes</h3><div class="row"><input id="nt" placeholder="Add a support note..." maxlength="2000"><button class="btn sec" id="na" style="white-space:nowrap">Add note</button></div>
+  <table style="margin-top:8px">${d.events.map(e=>`<tr><td class="muted" style="white-space:nowrap">${fmt(e.at)}</td><td><span class="tag ${/failed|conflict|expired/.test(e.kind)?"fail":e.kind==="note"?"":"ok"}">${esc(e.kind.replace(/_/g," "))}</span></td><td>${esc(typeof e.detail==="string"?e.detail:e.detail?Object.entries(e.detail).map(([k,v])=>k+": "+(Array.isArray(v)?v.join(", "):v)).join(" · "):"")}</td></tr>`).join("")||'<tr><td class="muted">No events yet.</td></tr>'}</table></div>`;
+ const msg=t=>$("#cmsg")&&($("#cmsg").textContent=t);const redo=l=>customerDetail(id,l);
+ el.querySelectorAll("[data-ob]").forEach(b=>b.onchange=async()=>{try{await api(`/customers/${id}/onboarding`,{method:"POST",body:JSON.stringify({step:b.dataset.ob,value:b.checked})})}catch(e){msg(e.message)}});
+ {const it=document.querySelector(".item.on .tag");if(it&&r)it.outerHTML=invTag(inv)} // keep the list badge in step with the detail
+ $("#na").onclick=async()=>{const t=$("#nt").value.trim();if(!t)return;try{await api(`/customers/${id}/notes`,{method:"POST",body:JSON.stringify({text:t})});redo(live)}catch(e){$("#nt").value=e.message}};
+ if(!r)return;
+ $("#rf").onclick=async()=>{msg("Asking GitHub...");try{redo(await api(`/customers/${id}/refresh`,{method:"POST"}))}catch(e){msg(e.message)}};
+ $("#ri").onclick=()=>confirmBar($("#cact"),`GitHub will email a NEW invitation to @${r.invited_user||c.github_username||"?"}.`,"Send invite",async()=>{try{await api(`/customers/${id}/reinvite`,{method:"POST",body:JSON.stringify({confirm:true})});redo(live)}catch(e){msg(e.message)}});
+ $("#ac").onclick=()=>{$("#cact").innerHTML=`<div class="row" style="margin-top:12px"><input id="au" placeholder="GitHub username" style="max-width:240px"><button class="btn sec" id="au_go">Review invite</button></div>`;
+  $("#au_go").onclick=()=>{const u=$("#au").value.trim().replace(/^@/,"");if(!u)return;confirmBar($("#cact"),`GitHub will email an invitation to @${u}. They get WRITE access to this customer's private repo.`,"Invite",async()=>{try{await api(`/customers/${id}/collaborators`,{method:"POST",body:JSON.stringify({username:u,confirm:true})});redo(live)}catch(e){msg(e.message)}})}};
+ const doSync=async(over)=>{try{const x=await api(`/customers/${id}/sync`,{method:"POST",body:JSON.stringify({confirm:true,overwrite_conflicts:over})});msg(x.status==="pushed"?`Pushed ${x.changed.length} file(s)`:"Already up to date");redo(live)}
+  catch(e){if(e.status===409&&e.body&&e.body.conflicts){$("#cact").innerHTML=`<div class="warn" style="margin-top:12px"><b>Files in the repo were changed by hand.</b> Nothing was pushed.<pre>${esc(e.body.conflicts.map(x=>x.path+": "+x.why).join("\n"))}</pre>Overwriting replaces those files with Nexara's version (the customer's <code>custom/</code> folder is never touched).<div class="row" style="margin-top:8px"><button class="btn" id="ov">Overwrite and sync</button><button class="btn sec" id="ovn">Leave as is</button></div></div>`;
+   $("#ovn").onclick=()=>$("#cact").innerHTML="";$("#ov").onclick=()=>confirmBar($("#cact"),"Overwrite the hand-edited files listed above.","Overwrite",()=>doSync(true))}else msg(e.message)}};
+ $("#sy").onclick=()=>confirmBar($("#cact"),`Push the latest version of ${d.agents.filter(a=>a.behind).map(a=>a.agent_name).join(", ")} to ${r.owner}/${r.name}. The customer's Claude Code picks it up through auto-update.`,"Push update",()=>doSync(false))}
 
 const EXAMPLES={"Customer Support":"Draft a response to a customer whose order ORD-1001 has been delayed.","Data Analyst":"Analyze the sales figures and identify the best-performing product by revenue."};
 async function playground(v){const agents=await api("/agents");if(!SEL.agent||!agents.find(a=>a.id===SEL.agent))SEL.agent=agents[0]?.id||null;

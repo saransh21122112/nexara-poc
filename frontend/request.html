@@ -13,6 +13,13 @@
 <label for="existing_tools">Existing tools or software</label><input id="existing_tools" name="existing_tools" required placeholder="e.g. Zendesk, Excel, HubSpot"><div class="err"></div>
 <label for="required_output">Required output</label><textarea id="required_output" name="required_output" required minlength="3" placeholder="What should the agent deliver?"></textarea><div class="err"></div>
 <label for="contact_email">Contact email</label><input id="contact_email" name="contact_email" type="email" required><div class="err"></div>
+<label for="github_username">Your GitHub username</label><input id="github_username" name="github_username" required maxlength="40" autocomplete="off" placeholder="e.g. octocat"><div class="err"></div>
+<p class="hint">We create a <b>private</b> GitHub repository just for your company and invite this account. No GitHub account yet? <a href="https://github.com/signup" target="_blank" rel="noopener">Create a free one</a> first.</p>
+<label for="claude_status">Do you already use Claude Code?</label><select id="claude_status" name="claude_status">
+<option value="have_claude_code">Yes, I use Claude Code</option><option value="have_claude_account">I have a Claude account but not Claude Code</option>
+<option value="no_claude">No, I'm new to Claude</option><option value="not_sure">Not sure</option></select>
+<p class="hint">Claude Code needs a paid Claude plan (Pro, Max, Team or Enterprise) or an Anthropic Console account. If you don't have it yet, we'll walk you through the setup.</p>
+<label for="os">Your computer (optional)</label><select id="os" name="os"><option value="">Prefer not to say</option><option value="mac">Mac</option><option value="windows">Windows</option><option value="linux">Linux</option><option value="other">Other</option></select>
 <div id="top" class="banner bad" hidden></div>
 <p style="margin-top:24px"><button class="btn lime" id="go" type="submit">Submit request</button></p></form></div></div>
 <script src="/js/request.js"></script></body></html>

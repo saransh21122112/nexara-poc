@@ -1,14 +1,10 @@
-import io
-import zipfile
-
-import yaml
 from langchain_core.messages import AIMessage
 
 from backend import agent_service
 
 REQ = dict(company_name="Acme", industry="Retail", agent_type="Data Analyst", business_problem="We cannot analyse sales fast.",
            tasks="Summarise sales and find top product", existing_tools="Excel", required_output="Short report",
-           contact_email="ops@acme.example")
+           contact_email="ops@acme.example", github_username="acme-dev", claude_status="have_claude_account")
 SPEC = dict(agent_name="Sales Analyst", purpose="Analyse sales", business_problem="Slow analysis",
             instructions="You analyse sales data accurately using the tools provided.", capabilities=["analyse"],
             input_schema={"type": "object"}, output_schema={"type": "object"}, required_tools=["calculator", "lookup_business_data"],
@@ -56,7 +52,7 @@ def _make_agent(client, monkeypatch):
     return client.post(f"/api/requests/{rid}/generate-agent").json()
 
 
-def test_agent_crud_run_evaluate_export(client, monkeypatch):
+def test_agent_crud_run_evaluate(client, monkeypatch):
     a = _make_agent(client, monkeypatch)
     assert a["spec"]["agent_name"] == "Sales Analyst"
     edited = {**SPEC, "agent_name": "Renamed"}
@@ -74,11 +70,6 @@ def test_agent_crud_run_evaluate_export(client, monkeypatch):
     assert ev["pass_rate"] == 1.0 and ev["results"][0]["passed"]
     assert client.get("/api/stats").json()["agents_tested"] == 1
     assert len(client.get("/api/runs").json()) == 2
-
-    for fmt, expect in (("crewai", "config/agents.yaml"), ("portable", "Dockerfile")):
-        z = zipfile.ZipFile(io.BytesIO(client.get(f"/api/agents/{a['id']}/export?format={fmt}").content))
-        assert expect in z.namelist()
-    yaml.safe_load(zipfile.ZipFile(io.BytesIO(client.get(f"/api/agents/{a['id']}/export?format=crewai").content)).read("config/tasks.yaml"))
 
 
 class FakeLLM:
@@ -184,16 +175,15 @@ def test_security_headers(client):
 
 def test_cloudflare_header_trusted_only_when_enabled(client, monkeypatch):
     from backend import main
+    bad = lambda ip: client.post("/api/factory/login", json={"password": "bad"}, headers={"CF-Connecting-IP": ip}).status_code
+    # default: the header is ignored, so rotating it cannot evade the lockout
     main._buckets.clear()
     monkeypatch.delenv("RENDER", raising=False)
     monkeypatch.delenv("TRUST_CF_CONNECTING_IP", raising=False)
-    h = {"CF-Connecting-IP": "5.5.5.5"}
-    assert client.get("/api/health", headers=h).json()["client_ip"] != "5.5.5.5"  # ignored by default
+    assert 429 in [bad(f"5.5.5.{i}") for i in range(12)]
+    # on Render (Cloudflare in front sets the header itself) each reported client is limited separately
+    main._buckets.clear()
     monkeypatch.setenv("RENDER", "true")
-    assert client.get("/api/health", headers=h).json()["client_ip"] == "5.5.5.5"
-    assert client.get("/api/health").json()["client_ip"] == "testclient"  # header absent -> falls back safely
-    # distinct Cloudflare-reported clients are limited separately
-    codes = [client.post("/api/factory/login", json={"password": "bad"}, headers={"CF-Connecting-IP": "6.6.6.6"}).status_code for _ in range(11)]
-    assert codes[-1] == 429
+    assert [bad("6.6.6.6") for _ in range(11)][-1] == 429
     assert client.post("/api/factory/login", json={"password": "nexara-demo"}, headers={"CF-Connecting-IP": "7.7.7.7"}).status_code == 200
     main._buckets.clear()

@@ -30,3 +30,6 @@ table{width:100%;border-collapse:collapse;font-size:13.5px}td,th{text-align:left
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.chip{font-size:12px;border:1px solid var(--line);border-radius:99px;padding:4px 11px;cursor:pointer;color:var(--muted);background:none}.chip:hover{color:var(--text);border-color:var(--v2)}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.empty{color:var(--muted);padding:26px;text-align:center;border:1px dashed var(--line);border-radius:12px}
 @media(max-width:820px){#app{grid-template-columns:1fr}aside{position:static;height:auto;display:flex;flex-wrap:wrap;gap:4px}.logo{width:100%;padding-bottom:8px}aside button.nav{width:auto}.split{grid-template-columns:1fr}main{padding:18px 16px}dl{grid-template-columns:1fr}}
+.ok-box{background:#0f2e1b;border:1px solid #1f6b3a;color:#bff3d1;border-radius:8px;padding:12px 14px;margin-top:12px}.ok-box a{color:var(--lime)}details summary{cursor:pointer;color:var(--muted)}
+a{color:#c4a1ff}a:hover{color:var(--lime)}
+.split>*{min-width:0}.item small{overflow-wrap:anywhere}td,dd{overflow-wrap:anywhere}
