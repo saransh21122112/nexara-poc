@@ -166,6 +166,14 @@ def repo_files(customer: dict, repo: dict, agents: list[dict], support_email: st
     owner, rname = repo["owner"], repo["name"]
     slugs = [a["slug"] for a in agents]
     commands = ", ".join(f"/{plugin}:{s}" for s in slugs) or "(none yet)"
+    # Defence in depth: these values are pasted into shell/PowerShell code that customers run. They are built from sanitised slugs and
+    # operator config today; refuse to generate anything if that ever stops being true (free text may only land in comments/docs).
+    for label, val, rx in (("owner", owner, r"[A-Za-z0-9._-]{1,100}"), ("repo", rname, r"[A-Za-z0-9._-]{1,100}"),
+                           ("plugin", plugin, r"[a-z0-9]+(-[a-z0-9]+)*"), ("marketplace", mkt, r"[a-z0-9]+(-[a-z0-9]+)*")):
+        if not re.fullmatch(rx, val):
+            raise ValueError(f"unsafe {label} name for generated scripts: {val!r}")
+    if not all(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", x) for x in slugs):
+        raise ValueError("unsafe agent slug for generated scripts")
     agent_list = "\n".join(f"- `/{plugin}:{a['slug']} <what to review or do>` - {_first_sentence(a['spec']['purpose'], 160)}" for a in agents) or "- (agents will appear here)"
 
     files: dict[str, str] = {}

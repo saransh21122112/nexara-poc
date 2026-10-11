@@ -272,3 +272,38 @@ def test_real_cli_loads_a_plain_folder_copy_with_no_settings_and_no_duplicates(t
     det = subprocess.run(["claude", "plugin", "details", f"{PLUGIN}@skills-dir"], capture_output=True, text=True, env=env, timeout=90).stdout
     assert re.search(r"Skills \(2\)\s+(acme-code-reviewer, acme-sales-analyst|acme-sales-analyst, acme-code-reviewer)", det), det
     assert re.search(r"Agents \(2\)", det) and "Hooks (0)" in det, det
+
+
+# ------------------------------------------------------------------ the scripts customers run must never execute customer-supplied text
+HOSTILE = 'Evil"; rm -rf ~ #$(touch /tmp/pwned_company) `id` \u2028 $env:USERPROFILE\nline2 \\'
+
+
+def test_customer_text_only_ever_lands_in_comments_of_the_shipped_scripts():
+    spec = {**SPEC, "agent_name": "Agent `id`", "capabilities": ["c $(touch /tmp/pwned_cap)"], "purpose": "p; rm -rf /"}
+    files, _ = build((spec,), {"company_name": HOSTILE, "slug": "evil-co"}, {"owner": "o", "name": "nexara-evil-co"})
+    for path in (p for p in files if p.startswith("scripts/")):
+        text = files[path]
+        for marker in ("pwned_company", "pwned_cap", "rm -rf"):
+            for line in text.splitlines():
+                if marker in line:
+                    assert line.lstrip().startswith("#"), (path, line)              # only a comment line may mention it
+        assert "\u2028" not in text and "\r" not in text
+        if path.endswith(".sh") and shutil.which("bash"):
+            assert subprocess.run(["bash", "-n"], input=text, text=True, capture_output=True).returncode == 0
+
+
+@pytest.mark.parametrize("owner,repo", [('o"; rm -rf ~; "', "nexara-x"), ("o", "nexara-x $(id)"), ("o o", "r"), ("o", "r\nx"), ("", "r"), ("o", "")])
+def test_generation_refuses_unsafe_owner_or_repo_names(owner, repo):
+    with pytest.raises(ValueError):
+        build((SPEC,), CUST, {"owner": owner, "name": repo})
+
+
+def test_generation_refuses_unsafe_plugin_or_agent_slugs(monkeypatch):
+    monkeypatch.setattr(repo_gen, "company_slug", lambda s: "bad name; id")
+    with pytest.raises(ValueError):
+        build((SPEC,))
+    monkeypatch.undo()
+    files, agents = build((SPEC,))
+    agents[0]["slug"] = "x; id"
+    with pytest.raises(ValueError):
+        repo_gen.repo_files(CUST, REPO, agents)
