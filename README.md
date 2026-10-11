@@ -34,6 +34,7 @@ By default the app uses SQLite (`data/nexara.db`). Set `DATABASE_URL=postgresql:
 2. Render dashboard -> **New -> Blueprint** -> select the repo -> apply.
 3. In the new service's *Environment*: read the generated `FACTORY_PASSWORD`, and set `ANTHROPIC_API_KEY` (or `OPENAI_API_KEY` + `AI_PROVIDER=openai`). Without a key, customer calls return a clear 503.
 4. Open `https://<service>.onrender.com/factory`. The public URL is picked up automatically (`RENDER_EXTERNAL_URL`) and shown in the customer-API panel.
+Rate limits use the real client address: forwarded headers are ignored unless you set `TRUSTED_PROXY_HOPS` (the blueprint sets it to 1 for Render's single proxy). After the first deploy, confirm limits are per-client rather than shared by all callers (if every user shares one bucket, the proxy chain has more hops than assumed).
 Notes: free web services sleep when idle (slow first call; use a paid plan for always-on customer traffic) and free Postgres has a limited lifetime - check Render's current terms. Factory sessions and rate limits are in memory, so a restart logs you out. Do **not** use the Claude-subscription provider on a public host.
 
 ## Choosing the AI provider (a switch)

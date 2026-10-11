@@ -28,7 +28,11 @@ async def lifespan(_):
     yield
 
 
-app = FastAPI(title="Nexara AI Agent Factory (POC)", lifespan=lifespan)
+# Public hosts (Render sets RENDER) don't expose the interactive API docs / schema.
+_docs = not os.environ.get("RENDER") and os.environ.get("DISABLE_DOCS") != "1"
+app = FastAPI(title="Nexara AI Agent Factory (POC)", lifespan=lifespan,
+              docs_url="/docs" if _docs else None, redoc_url="/redoc" if _docs else None,
+              openapi_url="/openapi.json" if _docs else None)
 
 
 @app.exception_handler(NotConfigured)
@@ -47,9 +51,14 @@ _buckets: dict[str, collections.deque] = {}  # ponytail: in-memory per-process l
 
 
 def client_ip(request: Request) -> str:
-    # Fly/most proxies put the real client first in these headers; fall back to the socket peer
-    return (request.headers.get("fly-client-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
-            or (request.client.host if request.client else "unknown"))
+    """Address used for rate limiting. Client-supplied headers are NOT trusted by default (they are trivially spoofed).
+    Behind exactly N trusted proxies set TRUSTED_PROXY_HOPS=N: we then take the Nth entry from the RIGHT of
+    X-Forwarded-For, i.e. the address your own proxy appended, which a client cannot forge."""
+    hops = int(os.environ.get("TRUSTED_PROXY_HOPS", "0"))
+    xff = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    if hops > 0 and len(xff) >= hops:
+        return xff[-hops]
+    return request.client.host if request.client else "unknown"
 
 
 def limit(bucket: str, key: str, n: int, seconds: int, what: str):
@@ -77,6 +86,9 @@ def _agent_or_404(aid: str) -> dict:
 @app.middleware("http")
 async def no_cache_static(request, call_next):
     resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"  # the factory login must not be framed (clickjacking)
+    resp.headers["Referrer-Policy"] = "same-origin"
     if not request.url.path.startswith("/api"):
         resp.headers["Cache-Control"] = "no-cache"  # POC: always revalidate so edits show immediately
     return resp

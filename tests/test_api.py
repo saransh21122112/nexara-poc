@@ -158,6 +158,25 @@ def test_public_request_form_is_rate_limited(client, monkeypatch):
     monkeypatch.setenv("REQUESTS_PER_HOUR_PER_IP", "2")
     codes = [client.post("/api/requests", json=REQ).status_code for _ in range(3)]
     assert codes == [201, 201, 429]
-    # a different client IP is counted separately
-    assert client.post("/api/requests", json=REQ, headers={"Fly-Client-IP": "9.9.9.9"}).status_code == 201
     main._buckets.clear()
+
+
+def test_spoofed_headers_cannot_evade_limits(client, monkeypatch):
+    from backend import main
+    main._buckets.clear()
+    bad = lambda i, **h: client.post("/api/factory/login", json={"password": "bad"}, headers={"X-Forwarded-For": f"1.1.1.{i}", "Fly-Client-IP": f"2.2.2.{i}", **h}).status_code
+    # default (no trusted proxy): forwarded headers are ignored entirely
+    assert 429 in [bad(i) for i in range(15)]
+    # behind one trusted proxy: only the rightmost (proxy-appended) entry counts; prepending fake IPs doesn't help
+    main._buckets.clear()
+    monkeypatch.setenv("TRUSTED_PROXY_HOPS", "1")
+    codes = [client.post("/api/factory/login", json={"password": "bad"}, headers={"X-Forwarded-For": f"9.9.9.{i}, 7.7.7.7"}).status_code for i in range(15)]
+    assert 429 in codes
+    # ...while a genuinely different client (different rightmost entry) is counted separately
+    assert client.post("/api/factory/login", json={"password": "nexara-demo"}, headers={"X-Forwarded-For": "8.8.8.8"}).status_code == 200
+    main._buckets.clear()
+
+
+def test_security_headers(client):
+    h = client.get("/api/health").headers
+    assert h["x-content-type-options"] == "nosniff" and h["x-frame-options"] == "DENY"
