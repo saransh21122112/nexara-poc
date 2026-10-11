@@ -3,22 +3,25 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/site.css"></head><body>
 <div class="wrap">
-<nav><a class="logo" href="/">Nexara<b>.AI</b></a><div><a class="link" href="#agents">Agents</a><a class="link" href="#how">How it works</a><a class="btn lime" style="margin-left:22px;padding:9px 18px" href="/request">Build My AI Agent</a></div></nav>
-<header class="hero"><span class="pill">Custom AI agents for business automation</span>
+<nav id="nav"><a class="logo" href="/">Nexara<b>.AI</b></a><div class="links"><a class="link hide" href="#agents">Agents</a><a class="link hide" href="#how">How it works</a><a class="btn lime" style="margin-left:12px;padding:9px 18px" href="/request">Build My AI Agent</a></div></nav>
+<header class="hero"><div><span class="pill">Custom AI agents for business automation</span>
 <h1>Meet your next workforce. <span>Built around your business.</span></h1>
 <p>Nexara designs, tests and delivers AI agents tailored to your processes, tools and data. Tell us the problem; we hand you a working, tested agent.</p>
-<div class="row"><a class="btn lime" href="/request">Build My AI Agent</a><a class="btn ghost" href="#agents">Explore Agents</a></div></header>
+<div class="row"><a class="btn lime" href="/request">Build My AI Agent</a><a class="btn ghost" href="#agents">Explore Agents</a></div></div>
+<div class="demo" aria-hidden="true"><div class="bar"><i></i><i></i><i></i><span>Budget Desk agent &middot; live</span></div><div class="body" id="demo"></div></div></header>
 
-<section id="agents"><h2>Agent solutions</h2><p class="sub">Pick a starting point. Every agent is customised to your company.</p><div class="grid" id="cards"></div></section>
+<div class="stats rv"><div class="stat"><div class="n" data-to="6">0</div><span>Agent templates</span></div><div class="stat"><div class="n" data-to="4">0</div><span>Steps from idea to handover</span></div><div class="stat"><div class="n" data-to="100" data-suffix="%">0</div><span>Tested before delivery</span></div><div class="stat"><div class="n" data-to="1" data-suffix=" repo">0</div><span>Private repo per customer</span></div></div>
 
-<section id="how"><h2>How it works</h2><p class="sub">From a business requirement to a tested agent.</p>
+<section id="agents"><h2 class="rv">Agent solutions</h2><p class="sub rv">Pick a starting point. Every agent is customised to your company.</p><div class="grid" id="cards"></div></section>
+
+<section id="how"><h2 class="rv">How it works</h2><p class="sub rv">From a business requirement to a tested agent.</p>
 <div class="steps">
-<div class="step"><h3>Describe the need</h3><p>Tell us the problem, tasks, tools and the output you expect.</p></div>
-<div class="step"><h3>We specify the agent</h3><p>Our engineers turn it into a precise agent specification with safety limits.</p></div>
-<div class="step"><h3>We test it</h3><p>Real tasks, controlled tool access and measurable checks before delivery.</p></div>
-<div class="step"><h3>Handover</h3><p>You receive a runnable package, ready to connect to your systems.</p></div></div></section>
+<div class="step rv"><div class="no">1</div><h3>Describe the need</h3><p>Tell us the problem, tasks, tools and the output you expect.</p></div>
+<div class="step rv" style="--d:.1s"><div class="no">2</div><h3>We specify the agent</h3><p>Our engineers turn it into a precise agent specification with safety limits.</p></div>
+<div class="step rv" style="--d:.2s"><div class="no">3</div><h3>We test it</h3><p>Real tasks, controlled tool access and measurable checks before delivery.</p></div>
+<div class="step rv" style="--d:.3s"><div class="no">4</div><h3>Handover</h3><p>You receive a runnable package, ready to connect to your systems.</p></div></div></section>
 
-<div class="cta"><h2>Ready to put an agent to work?</h2><a class="btn lime" href="/request">Build My AI Agent</a></div>
+<div class="cta rv"><h2>Ready to put an agent to work?</h2><a class="btn lime" href="/request">Build My AI Agent</a></div>
 <footer>&copy; Nexara AI &middot; Proof-of-concept build</footer></div>
 <script>
 const A=[["Customer Support","Customer Support Agent","🎧","Drafts accurate, on-brand replies and triages tickets."],
@@ -27,5 +30,18 @@ const A=[["Customer Support","Customer Support Agent","🎧","Drafts accurate, o
 ["Research","Research Agent","🔎","Gathers, compares and summarises information."],
 ["Workflow Automation","Workflow Automation Agent","⚙️","Automates repetitive multi-step business processes."],
 ["Custom","Custom AI Agent","✨","Something else? We design an agent around your process."]];
-document.getElementById("cards").innerHTML=A.map(([t,n,i,d])=>`<div class="card"><div class="ic">${i}</div><h3>${n}</h3><p>${d}</p><a class="btn lime" href="/request?agent=${encodeURIComponent(t)}">Request this agent</a></div>`).join("");
+document.getElementById("cards").innerHTML=A.map(([t,n,i,d],k)=>`<div class="card rv" style="--d:${k%3*.08}s"><div class="ic">${i}</div><h3>${n}</h3><p>${d}</p><a class="btn lime" href="/request?agent=${encodeURIComponent(t)}">Request this agent</a></div>`).join("");
+const RM=matchMedia("(prefers-reduced-motion:reduce)").matches;
+// sticky nav border
+const nav=document.getElementById("nav");addEventListener("scroll",()=>nav.classList.toggle("scrolled",scrollY>8),{passive:true});
+// scroll reveal + count-up
+const count=el=>{const to=+el.dataset.to,sfx=el.dataset.suffix||"";if(RM){el.textContent=to+sfx;return}let t0;const f=t=>{t0??=t;const p=Math.min((t-t0)/900,1);el.textContent=Math.round(to*(1-Math.pow(1-p,3)))+sfx;if(p<1)requestAnimationFrame(f)};requestAnimationFrame(f)};
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add("in");e.target.querySelectorAll("[data-to]").forEach(count);io.unobserve(e.target)}}),{threshold:.15});
+document.querySelectorAll(".rv").forEach(el=>io.observe(el));
+// scripted "agent at work" loop (decorative)
+const SCRIPT=[["u","How much did we spend on tokens this week?"],["step","<b>✓</b> Reading usage-export.csv"],["step","<b>✓</b> Adding up cost per model"],["a","$18.40 total. Opus is 71% of spend: cache hits are only 38%, so a shared system prompt would cut about $4 a week."]];
+const demo=document.getElementById("demo");
+function play(){demo.innerHTML="";let i=0;const next=()=>{if(i>=SCRIPT.length){setTimeout(play,5000);return}const [k,t]=SCRIPT[i++];const d=document.createElement("div");d.className="msg "+k;demo.appendChild(d);
+ if(k==="step"||RM){d.innerHTML=t;setTimeout(next,k==="step"?800:1200)}else{let n=0;d.classList.add("caret");const tick=()=>{d.textContent=t.slice(0,++n);if(n<t.length)setTimeout(tick,k==="u"?28:16);else{d.classList.remove("caret");setTimeout(next,700)}};tick()}};next()}
+play();
 </script></body></html>

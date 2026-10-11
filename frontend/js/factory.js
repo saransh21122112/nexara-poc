@@ -18,8 +18,9 @@ async function loadProv(){PROV=await api("/provider");const L={anthropic:"Anthro
 $("#prov").onchange=async e=>{PROV=await api("/provider",{method:"PUT",body:JSON.stringify({provider:e.target.value})});await loadProv();if(VIEW!=="overview")render()};
 function cfgBanner(){const c=PROV.providers[PROV.current];return c.configured?"":`<div class="bad"><b>Provider not configured.</b> ${esc(c.issue)} Or switch provider in the header.</div>`}
 const fmt=t=>t?new Date(t).toLocaleString():"";
-async function render(){const v=$("#view");v.innerHTML='<p class="muted">Loading...</p>';
- try{await ({overview,requests,customers,builder,playground}[VIEW])(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
+function countUp(root){root.querySelectorAll(".tile .n").forEach(el=>{const to=+el.textContent;if(!isFinite(to)||matchMedia("(prefers-reduced-motion:reduce)").matches)return;let t0;const f=t=>{t0??=t;const p=Math.min((t-t0)/700,1);el.textContent=Math.round(to*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(f)};requestAnimationFrame(f)})}
+async function render(){const v=$("#view");v.innerHTML='<div class="sk big"></div><div class="sk"></div><div class="sk" style="width:70%"></div>';
+ try{await ({overview,requests,customers,builder,playground}[VIEW])(v);countUp(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
 
 async function overview(v){const s=await api("/stats");
  v.innerHTML=`<h2>Overview</h2><p class="muted">Live counts from the database.</p><div class="tiles">
