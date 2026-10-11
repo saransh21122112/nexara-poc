@@ -6,5 +6,5 @@ go.onclick=async()=>{go.disabled=true;go.textContent="Confirming...";
  try{const r=await fetch("/api/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token})});const j=await r.json().catch(()=>({}));
   if(!r.ok)throw new Error(j.detail||"Could not confirm.");
   history.replaceState(null,"",location.pathname);
-  document.querySelector("h1").textContent="Email confirmed";msg.textContent="Thank you. Our team will now build your agent and email you when your private repository is ready.";go.hidden=true;
+  document.querySelector("h1").textContent="Email confirmed";msg.textContent="Thank you. Our team will now build your request and email you when your private repository is ready.";go.hidden=true;
  }catch(e){msg.textContent=e.message;go.disabled=false;go.textContent="Try again"}};

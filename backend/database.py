@@ -73,7 +73,9 @@ CREATE TABLE IF NOT EXISTS repo_agents (id TEXT PRIMARY KEY, repo_id TEXT REFERE
 CREATE TABLE IF NOT EXISTS email_verifications (id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id), email TEXT,
   token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT, used_at TEXT);
 CREATE TABLE IF NOT EXISTS repo_events (id TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(id), repo_id TEXT,
-  at TEXT, kind TEXT, detail TEXT)
+  at TEXT, kind TEXT, detail TEXT);
+CREATE TABLE IF NOT EXISTS build_events (id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id), seq INTEGER, at TEXT,
+  stage TEXT, state TEXT, title TEXT, detail TEXT)
 """
 
 
@@ -471,3 +473,59 @@ def stats() -> dict:
                 "agents_tested": tested, "customers": one("SELECT COUNT(*) FROM customers"),
                 "agents_delivered": one("SELECT COUNT(DISTINCT agent_id) FROM repo_agents"),
                 "recent_activity": sorted(activity, key=lambda a: a["at"], reverse=True)[:12]}
+
+
+# ------------------------------------------------------------------ build events (the live pipeline view)
+BUILD_STAGES = ["received", "analyse", "specify", "test", "package", "ready"]
+BUILD_TERMINAL = {"failed", "interrupted"}      # a build also ends when "ready" is done
+
+
+def add_build_event(request_id: str, stage: str, state: str, title: str, detail: dict | None = None) -> dict:
+    with db() as c:
+        seq = (c.execute("SELECT MAX(seq) FROM build_events WHERE request_id=?", (request_id,)).fetchone()[0] or 0) + 1
+        eid = new_id("BEV")
+        c.execute("INSERT INTO build_events VALUES (?,?,?,?,?,?,?,?)", (eid, request_id, seq, now(), stage, state, title, json.dumps(detail)))
+    return {"id": eid, "seq": seq}
+
+
+def list_build_events(request_id: str) -> list[dict]:
+    with db() as c:
+        rows = c.execute("SELECT * FROM build_events WHERE request_id=? ORDER BY seq", (request_id,)).fetchall()
+    return [_j(r, "detail") for r in rows]
+
+
+def build_status(request_id: str) -> dict:
+    """Derived from the events of the LATEST build (everything since the last 'received running'). status: none|running|failed|interrupted|ready."""
+    evs = list_build_events(request_id)
+    starts = [i for i, e in enumerate(evs) if e["stage"] == "received" and e["state"] == "running"]
+    evs = evs[starts[-1]:] if starts else []
+    stages: dict = {}
+    for e in evs:
+        cur = stages.setdefault(e["stage"], {"state": "pending", "title": "", "detail": None, "at": e["at"], "progress": []})
+        if e["state"] == "progress":
+            cur["progress"].append({"title": e["title"], "detail": e["detail"], "at": e["at"]})
+        else:
+            cur.update(state=e["state"], title=e["title"], detail=e["detail"] if e["detail"] is not None else cur["detail"], done_at=e["at"])
+    last = evs[-1] if evs else None
+    if not last:
+        status = "none"
+    elif last["state"] in BUILD_TERMINAL:
+        status = last["state"]
+    elif last["stage"] == "ready" and last["state"] == "done":
+        status = "ready"
+    else:
+        status = "running"
+    return {"status": status, "stages": stages, "events": evs, "started_at": evs[0]["at"] if evs else None}
+
+
+def interrupt_stale_builds() -> int:
+    """A redeploy kills a running build task; mark such builds interrupted so no screen spins forever."""
+    with db() as c:
+        ids = [r[0] for r in c.execute("SELECT DISTINCT request_id FROM build_events").fetchall()]
+    n = 0
+    for rid in ids:
+        if build_status(rid)["status"] == "running":
+            last = list_build_events(rid)[-1]
+            add_build_event(rid, last["stage"], "interrupted", "The server restarted during this step. Start the build again.")
+            n += 1
+    return n

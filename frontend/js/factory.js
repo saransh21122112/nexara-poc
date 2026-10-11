@@ -20,7 +20,7 @@ function cfgBanner(){const c=PROV.providers[PROV.current];return c.configured?""
 const fmt=t=>t?new Date(t).toLocaleString():"";
 function countUp(root){root.querySelectorAll(".tile .n").forEach(el=>{const to=+el.textContent;if(!isFinite(to)||matchMedia("(prefers-reduced-motion:reduce)").matches)return;let t0;const f=t=>{t0??=t;const p=Math.min((t-t0)/700,1);el.textContent=Math.round(to*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(f)};requestAnimationFrame(f)})}
 async function render(){const v=$("#view");v.innerHTML='<div class="sk big"></div><div class="sk"></div><div class="sk" style="width:70%"></div>';
- try{await ({overview,requests,customers,builder,playground}[VIEW])(v);countUp(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
+ try{await ({overview,requests,customers,live,builder,playground}[VIEW])(v);countUp(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
 
 async function overview(v){const s=await api("/stats");
  v.innerHTML=`<h2>Overview</h2><p class="muted">Live counts from the database.</p><div class="tiles">
@@ -35,7 +35,7 @@ async function requests(v){const [rs,cs]=await Promise.all([api("/requests"),api
   ${[["Industry","industry"],["Business problem","business_problem"],["Tasks","tasks"],["Existing tools","existing_tools"],["Required output","required_output"],["Contact","contact_email"],["GitHub","github_username"],["Claude","claude_status"],["OS","os"]].map(([l,k])=>`<dt>${l}</dt><dd>${esc(r[k])}</dd>`).join("")}</dl>
   <div class="row" style="margin-top:12px"><span class="muted">Customer: <b>${esc((cs.find(c=>c.id===r.customer_id)||{}).company_name||"-")}</b> ${esc(r.customer_id||"")}</span><select id="att" style="max-width:420px">${cs.map(c=>`<option value="${c.id}" ${c.id===r.customer_id?"selected":""}>${esc(c.company_name)} · ${esc(c.contact_email)}${c.github_username?" · @"+esc(c.github_username):""} (${esc(c.id)})</option>`).join("")}</select><button class="btn sec" id="attb">Attach to this customer</button></div><div id="attc"></div>
   <div class="row" style="margin-top:12px"><span class="muted">Requester email: ${r.email_verified?`<span class="tag ok">verified (${esc(r.email_verified_via||"")})</span>`:'<span class="tag fail">not verified</span>'}</span>${r.email_verified?"":'<button class="btn sec" id="vrs">Resend confirmation email</button><button class="btn sec" id="vmn">Mark verified...</button>'}</div><div id="vfc"></div>
-  <div class="row" style="margin-top:16px"><button class="btn" id="gen">Build agent from this request</button>${r.agent_count?`<span class="muted">${r.agent_count} agent(s) already generated for this request</span>`:""}</div>`;
+  <div class="row" style="margin-top:16px"><button class="btn" id="gen">Build agent from this request</button><button class="btn sec" id="watch">Build and watch live</button>${r.agent_count?`<span class="muted">${r.agent_count} agent(s) already generated for this request</span>`:""}</div>`;
   $("#attb").onclick=()=>{const to=$("#att").value;if(to===r.customer_id){$("#attc").innerHTML='<p class="muted">Already attached to that customer.</p>';return}
    confirmBar($("#attc"),`Link request ${r.id} (from ${r.contact_email}) to the customer you selected. Its agents can then be delivered into THAT customer's repository. Only do this if you have verified they are the same company.`,"Attach",async()=>{try{await api(`/requests/${r.id}/attach-customer`,{method:"POST",body:JSON.stringify({customer_id:to,confirm:true})});requests(v)}catch(e){$("#attc").innerHTML=`<div class="bad">${esc(e.message)}</div>`}})};
   if($("#vrs")){
@@ -43,6 +43,7 @@ async function requests(v){const [rs,cs]=await Promise.all([api("/requests"),api
    $("#vmn").onclick=()=>{$("#vfc").innerHTML=`<div class="row" style="margin-top:8px"><input id="vnote" placeholder="How did you verify them? (e.g. confirmed by phone on 11 Oct)" maxlength="500" style="max-width:520px"><button class="btn sec" id="vrev">Review</button></div>`;
     $("#vrev").onclick=()=>{const n=$("#vnote").value.trim();if(n.length<5){$("#vnote").placeholder="Please write a few words about how you verified them";return}
      confirmBar($("#vfc"),`Record that YOU verified ${r.contact_email} yourself (${n}). Agents can then be delivered for this request.`,"Mark verified",async()=>{try{await api(`/requests/${r.id}/verify-manually`,{method:"POST",body:JSON.stringify({confirm:true,note:n})});requests(v)}catch(e){$("#vfc").innerHTML=`<div class="bad">${esc(e.message)}</div>`}})}}}
+  $("#watch").onclick=()=>{SEL.live=r.id;SEL.start=true;go("live")};
   $("#gen").onclick=()=>{SEL.req=r.id;SEL.autogen=true;go("builder")}};
  show();document.querySelectorAll(".item").forEach(i=>i.onclick=()=>{SEL.req=i.dataset.id;document.querySelectorAll(".item").forEach(x=>x.classList.toggle("on",x===i));show()})}
 

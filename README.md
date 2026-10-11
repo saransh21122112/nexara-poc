@@ -84,3 +84,7 @@ Fake GitHub (`tests/fake_github.py`) for the client, delivery, sync, conflict, i
 
 ## Request-form assistant
 `POST /api/requests/assist` lets a customer describe what they want and fills the request form (or edits one box on request). It is public, so it is limited per IP (`ASSIST_PER_HOUR_PER_IP`, default 10) and per day overall (`ASSIST_PER_DAY`, default 200), input is capped at 1,500 characters, and it can only return the form's text boxes (never email, GitHub or OS). It uses the active provider; if none is configured the form still works by hand.
+
+## Live build and public tracker
+`POST /api/requests/{id}/build` (factory login) runs the pipeline: request, plan, specification (one model call), the spec's test scenarios, then the list of files that would ship. Every step is recorded in `build_events`, so the **Live build** view in `/factory` shows only things that really happened, and nothing is pushed to GitHub (delivery stays a separate, confirmed action). The job runs inside the web process: a restart marks a running build as interrupted instead of leaving it spinning.
+Customers can follow progress at `/track?id=REQ-...`. That page gets step names and states only (never company, specification, run output or error text) and is limited per IP (`TRACK_PER_HOUR_PER_IP`, default 120).

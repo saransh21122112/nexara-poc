@@ -225,14 +225,18 @@ def check_scenario(sc: dict, run: dict) -> tuple[bool, str]:
     return True, "all deterministic checks passed"
 
 
-async def evaluate(agent: dict, max_scenarios: int = 3) -> dict:
+async def evaluate(agent: dict, max_scenarios: int = 3, on_result=None) -> dict:
+    """on_result(result_dict, index, total) is awaited after each scenario (the live build view uses it)."""
     results = []
-    for sc in agent["spec"]["test_scenarios"][:max_scenarios]:
+    scenarios = agent["spec"]["test_scenarios"][:max_scenarios]
+    for i, sc in enumerate(scenarios):
         run = await run_agent(agent, sc["task"], kind="test")
         ok, why = check_scenario(sc, run)
         results.append({"name": sc["name"], "expected_behavior": sc["expected_behavior"], "task": sc["task"],
                         "actual": run["response"] or run["error"] or "", "passed": ok, "reason": why,
                         "run_id": run["id"], "tool_calls": run["tool_calls"]})
+        if on_result:
+            await on_result(results[-1], i, len(scenarios), run.get("latency_ms"))
     rate = sum(r["passed"] for r in results) / len(results) if results else 0.0
     payload = {"agent_id": agent["id"], "pass_rate": rate, "results": results,
                "note": "Basic prototype checks (non-empty, keywords, tool use). Not a comprehensive model evaluation."}

@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Re
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from . import agent_service, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
+from . import agent_service, build_service, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
 from .github_client import GitHubClient, GitHubError, NotConfigured as GitHubNotConfigured  # noqa: E402
 from .models import (AGENT_TYPES, AgentSpec, AssistIn, AttachIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
                      ManualVerifyIn, ProviderIn, RequestIn, RunIn, SyncIn, VerifyIn)
@@ -27,6 +27,7 @@ TOKENS: set[str] = set()  # DEMO AUTH ONLY: in-memory tokens, not production sec
 async def lifespan(_):
     dbm.init_db()
     dbm.backfill_customers()
+    dbm.interrupt_stale_builds()
     yield
 
 
@@ -254,6 +255,59 @@ async def generate_agent(request_id: str):
         raise HTTPException(404, f"Request {request_id} not found")
     spec, provider, model = await agent_service.generate_spec(r)
     return dbm.create_agent(request_id, spec, provider, model)
+
+
+@app.post("/api/requests/{request_id}/build", status_code=202, dependencies=[Depends(factory_auth)])
+async def start_build(request_id: str):
+    if not dbm.get_request(request_id):
+        raise HTTPException(404, f"Request {request_id} not found")
+    if build_service.is_running(request_id):
+        raise HTTPException(409, "A build is already running for this request.")
+    build_service.start(request_id)
+    return {"started": True}
+
+
+@app.get("/api/builds/{request_id}", dependencies=[Depends(factory_auth)])
+def get_build(request_id: str):
+    if not dbm.get_request(request_id):
+        raise HTTPException(404, f"Request {request_id} not found")
+    b = dbm.build_status(request_id)
+    r = dbm.get_request(request_id)
+    cust = dbm.get_customer(r["customer_id"]) if r.get("customer_id") else None
+    b["delivery"] = [e for e in (dbm.list_events(cust["id"], 30) if cust else []) if e["kind"] in ("repo_created", "agent_added", "invited", "deliver_failed", "invite_failed")]
+    return b
+
+
+_TRACK = [("received", "Request received", "We have your request and an engineer is on it."),
+          ("analyse", "Planning", "We are working out exactly what to build."),
+          ("specify", "Designing", "We are writing the specification for your build."),
+          ("test", "Testing", "We are running checks on real tasks."),
+          ("package", "Packaging", "We are preparing your private repository."),
+          ("ready", "Ready for handover", "Your build passed our checks and is waiting for final review.")]
+
+
+@app.get("/api/track/{request_id}")
+def track(request_id: str, request: Request, response: Response):
+    """Public progress for a customer. Only step names and states: never company, spec, run output or error text."""
+    limit("track", client_ip(request), int(os.environ.get("TRACK_PER_HOUR_PER_IP", "120")), 3600, "status checks")
+    response.headers["Cache-Control"] = "no-store"
+    if not dbm.get_request(request_id):
+        raise HTTPException(404, "We could not find that reference.")
+    b = dbm.build_status(request_id)
+    steps = []
+    for key, name, text in _TRACK:
+        st = b["stages"].get(key, {}).get("state", "pending")
+        steps.append({"key": key, "name": name, "text": text, "state": {"done": "done", "running": "active", "failed": "problem", "interrupted": "problem"}.get(st, "pending")})
+    if b["status"] == "none":
+        steps[0]["state"] = "done"           # the request exists, so it was received even before a build starts
+        steps[1]["state"] = "active"
+    t = b["stages"].get("test", {}).get("detail") or {}
+    return {"status": b["status"], "steps": steps, "checks": {"passed": t.get("passed"), "total": t.get("total")} if t.get("total") else None}
+
+
+@app.get("/track")
+def track_page():
+    return FileResponse(FRONTEND / "track.html")
 
 
 @app.get("/api/agents", dependencies=[Depends(factory_auth)])
