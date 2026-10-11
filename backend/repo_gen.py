@@ -1,5 +1,5 @@
-"""Builds the complete file tree of a customer's private repo: a Claude Code plugin marketplace (one plugin per agent) plus
-customer docs and setup scripts. Pure functions: (customer, repo, agents) -> {path: text}. Nothing here talks to GitHub."""
+"""Builds the complete file tree of a customer's private repo: ONE Claude Code plugin at the repo root (all of the company's agents:
+agents/ + skills/), usable by a plain clone into ~/.claude/skills/, plus a marketplace entry, customer docs and helper scripts. Pure functions: (customer, repo, agents) -> {path: text}. Nothing here talks to GitHub."""
 import hashlib
 import json
 import re
@@ -22,20 +22,42 @@ def git_blob_sha(text: str) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
+GENERATOR_VERSION = 3   # bump when the generated files change meaningfully: every delivered agent then shows "repo behind" until synced
+
+
 def spec_hash(spec: dict) -> str:
-    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
+    return hashlib.sha256(json.dumps([GENERATOR_VERSION, spec], sort_keys=True).encode()).hexdigest()[:16]
+
+
+def kebab(name: str, limit: int = 40) -> str:
+    """Readable slug: splits camelCase and acronyms ('TokenSpendAnalyst' -> 'token-spend-analyst', 'PRBot' -> 'pr-bot')."""
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", s)
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:limit].strip("-")
 
 
 def plugin_slug(spec: dict) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", spec["agent_name"].lower()).strip("-")[:40].strip("-") or "agent"
+    """Slug of ONE agent (its agent file and skill name)."""
+    return kebab(spec["agent_name"]) or "agent"
+
+
+def company_slug(customer_slug: str) -> str:
+    """Name of the company's plugin (the repo root). It prefixes every skill: /<company>:<agent>."""
+    return kebab(customer_slug, 50) or "company"
 
 
 def marketplace_name(customer_slug: str) -> str:
-    return ("nexara-" + re.sub(r"[^a-z0-9]+", "-", customer_slug.lower()).strip("-"))[:60].strip("-")
+    return ("nexara-" + company_slug(customer_slug))[:60].strip("-")
 
 
 def _oneline(text: str, limit: int = 600) -> str:
     return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def _cut(text: str, limit: int) -> str:
+    """Shorten at a word boundary."""
+    t = _oneline(text, 10_000)
+    return t if len(t) <= limit else t[:limit].rsplit(" ", 1)[0].rstrip(",;:.") + "..."
 
 
 def _fold(text: str) -> str:
@@ -43,27 +65,69 @@ def _fold(text: str) -> str:
     return "\n".join("  " + ln for ln in textwrap.wrap(_oneline(text), 88)) or "  agent"
 
 
+def _first_sentence(text: str, limit: int = 170) -> str:
+    t = _oneline(text, 10_000)
+    m = re.match(r"(.+?[.!?])(\s|$)", t)
+    return _cut(m.group(1) if m else t, limit)
+
+
+def short_description(spec: dict) -> str:
+    """What the agent is for + when to use it, in about 300 characters. The full capability list lives in the agent body: the
+    description is always in Claude's context and drives routing, so it must stay short."""
+    cues = "; ".join(_cut(_adapt(c), 60) for c in spec["capabilities"][:3])
+    return _cut(f"{_first_sentence(_adapt(spec['purpose']))} Use when: {cues}.", 320)
+
+
+FACTORY_TOOLS = {
+    "lookup_business_data": "the data files the user points you to",
+    "calculator": "careful step-by-step arithmetic",
+}
+ENV_NOTE = """## Tools in this environment (read first)
+You run inside Claude Code with Read, Grep and Glob only. The instructions below were written for a test harness that offered
+extra tools named `calculator` and `lookup_business_data`; **those tools do not exist here, and you must not refuse or stall because of that.**
+- Instead of `calculator`: do the arithmetic yourself, carefully. Show the formula, the inputs and each intermediate result, keep full precision until the final rounding, and re-check totals by recomputing them a second way. Say once, briefly, that figures were computed by you rather than by a tool, so important numbers deserve a spot check.
+- Instead of `lookup_business_data`: use only data the user points you to (Read/Grep/Glob). Never invent records.
+Any rule below that says to "use the calculator" or "use lookup_business_data" means the substitutes above.
+"""
+
+
+def _adapt(text: str) -> str:
+    """Replace factory-only tool names in spec text with what is actually available in Claude Code."""
+    for name, repl in FACTORY_TOOLS.items():
+        text = re.sub(rf"`?\b{name}\b`?", repl, text)
+    return text
+
+
+def uses_factory_tools(spec: dict) -> bool:
+    text = " ".join([spec["instructions"], *spec["safety_restrictions"], *spec["success_criteria"], *spec["capabilities"]])
+    return any(t in FACTORY_TOOLS for t in spec.get("required_tools", [])) or any(re.search(rf"\b{n}\b", text) for n in FACTORY_TOOLS)
+
+
 def _fill(template: str, **tokens) -> str:
     """Single pass: substituted values are never rescanned, so customer-supplied text can't inject another token."""
     return re.sub(r"@@([A-Z_]+)@@", lambda m: tokens.get(m.group(1), m.group(0)), template)
 
 
-# ---------------------------------------------------------------- one plugin (one agent)
-def plugin_files(spec: dict, slug: str, company: str) -> dict[str, str]:
-    """Files of one plugin, paths relative to the plugin root. No `version` anywhere: Claude Code then versions by commit SHA,
-    so every push to the repo is picked up as an update."""
-    purpose = _oneline(spec["purpose"])
-    caps = "; ".join(_oneline(c, 120) for c in spec["capabilities"][:6])
-    rules = "\n".join(f"- {_oneline(s, 300)}" for s in spec["safety_restrictions"])
+# ---------------------------------------------------------------- one agent = one subagent + one skill at the plugin root
+def agent_files(spec: dict, slug: str, plugin: str) -> dict[str, str]:
+    """Files for one agent. Paths are relative to the repo root, which IS the plugin."""
+    rules = "\n".join(f"- {_oneline(_adapt(s), 300)}" for s in spec["safety_restrictions"])
+    caps = "\n".join(f"- {_oneline(_adapt(c), 200)}" for c in spec["capabilities"])
+    factory = uses_factory_tools(spec)
+    note = ENV_NOTE + "\n" if factory else ""
+    desc = short_description(spec)
     agent = f"""---
 name: {slug}
 description: >-
-{_fold(f'{purpose} Capabilities: {caps} Use this agent when the user asks for this kind of work, for example: "{_oneline(spec["capabilities"][0], 100)}".')}
+{_fold(desc)}
 tools: Read, Grep, Glob
 model: inherit
 ---
 
-{spec['instructions'].strip()}
+{note}{_adapt(spec['instructions'].strip())}
+
+## What you cover
+{caps}
 
 ## Safety restrictions
 {rules}
@@ -77,132 +141,84 @@ model: inherit
     skill = f"""---
 name: {slug}
 description: >-
-{_fold(f"{purpose} Use when the user asks for this kind of help, or mentions: {caps}.")}
+{_fold(desc)}
+argument-hint: what to apply it to (files, folders, a pull request, or "whole repo")
 ---
 
-# {_oneline(spec['agent_name'], 100)}
-
-{purpose}
-
-When this applies, hand the request to the `{slug}` subagent (Task tool) together with the relevant paths or the whole-repo
-scope, then present its findings clearly, ordered by importance. Do not do the agent's work yourself and do not add
-conclusions it did not reach.
-
-Success looks like:
-{chr(10).join('- ' + _oneline(c, 300) for c in spec['success_criteria'])}
-"""
-    command = f"""---
-description: >-
-{_fold(_oneline(purpose, 140))}
-argument-hint: What to apply it to (files, folders, a PR, or "whole repo")
----
-
-Use the `{slug}` subagent for the following request. Pass its findings back to the user as they are.
+Use the `{plugin}:{slug}` subagent for this request and give the user its findings as they are, most important first.
+Pass along the user's words and any paths they mention.
 
 Request: $ARGUMENTS
 
-If the request is empty, ask the user what to apply it to instead of guessing.
-"""
-    manifest = json.dumps({"name": slug, "description": _oneline(purpose, 280), "author": {"name": "Nexara AI"},
-                           "keywords": ["nexara", "agent"]}, indent=2) + "\n"
-    hook_script = f"""#!/usr/bin/env bash
-# OPTIONAL hook (inactive until you rename hooks.optional.json to hooks.json): after a git commit, nudge Claude to offer a run
-# of /{slug}. Non-blocking; it only adds a hint to the conversation.
-input="$(cat)"
-case "$input" in
-  *"git commit"*) printf '%s' '{{"hookSpecificOutput":{{"hookEventName":"PostToolUse","additionalContext":"A commit was just made. If it would help the user, offer to run /{slug} on the committed changes."}}}}' ;;
-esac
-exit 0
-"""
-    hooks = json.dumps({"description": f"OPTIONAL - rename this file to hooks.json to enable. After a git commit, Claude is nudged to offer /{slug}. Non-blocking.",
-                        "hooks": {"PostToolUse": [{"matcher": "Bash", "hooks": [
-                            {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/remind-after-commit.sh", "timeout": 5}]}]}}, indent=2) + "\n"
-    readme = f"""# {_oneline(spec['agent_name'], 100)} (plugin for {_oneline(company, 100)})
-
-{purpose}
-
-Managed by Nexara AI: this folder is regenerated when your agent is improved, so put your own changes in `../../custom/`.
-
-## Use
-`/{slug} <what to review or do>` - or just ask in plain words; the skill hands the work to the `{slug}` subagent.
-
-## What it can and can't do
-- The subagent has **read-only** tools (Read, Grep, Glob): it can read your project, never edit files or run commands.
-- Claude Code has file tools, so whole-project work needs no pasting; big projects still cost more and the agent should say which files it read.
-- To connect your own systems, add an MCP server (`.mcp.json`) and list its tools in the agent's `tools:` line, or ask us to.
-
-## Safety restrictions built in
-{rules}
-
-## Keep secrets out of reach (recommended)
-The agent is told not to open secret files, but an instruction is not a lock. For a hard guarantee add deny rules to your
-project's `.claude/settings.json` (best effort; applied to Claude Code's built-in file tools):
-```json
-{{"permissions": {{"deny": ["Read(./.env)", "Read(./.env.*)", "Read(**/*.pem)", "Read(**/*.key)", "Read(**/id_rsa*)", "Read(**/credentials*)"]}}}}
-```
-
-## Optional hook
-`hooks/hooks.optional.json` is **not active**. Rename it to `hooks.json` to enable a non-blocking nudge after `git commit`. Review hook scripts before enabling them.
-"""
-    return {".claude-plugin/plugin.json": manifest, f"agents/{slug}.md": agent, f"skills/{slug}/SKILL.md": skill,
-            f"commands/{slug}.md": command, "hooks/hooks.optional.json": hooks, "hooks/remind-after-commit.sh": hook_script,
-            "README.md": readme}
+If the request is empty, ask the user what to apply it to instead of guessing. Do not do the agent's work yourself and do not add
+conclusions it did not reach.
+{(chr(10) + "The agent has no calculator or database tool in Claude Code: it computes carefully by hand and says so. Do not refuse, do not ask the user to enable a tool, and do not redo its arithmetic with tools you lack." + chr(10)) if factory else ""}"""
+    return {f"agents/{slug}.md": agent, f"skills/{slug}/SKILL.md": skill}
 
 
-# ---------------------------------------------------------------- the whole repo
-def repo_files(customer: dict, repo: dict, agents: list[dict], support_email: str = "") -> dict[str, str]:
-    """customer: {company_name, slug}; repo: {owner, name}; agents: [{slug, spec}] in display order.
-    Returns every Nexara-managed file (CHANGELOG.md excluded)."""
+# ---------------------------------------------------------------- the whole repo (= one plugin for the company)
+def repo_files(customer: dict, repo: dict, agents: list[dict], support_email: str = "", legacy: list[str] | None = None) -> dict[str, str]:
+    """customer: {company_name, slug}; repo: {owner, name}; agents: [{slug, spec}] in display order; legacy: plugin names used by older
+    layouts (migrated through the marketplace `renames` map). Returns every Nexara-managed file (CHANGELOG.md excluded)."""
     company = _oneline(customer["company_name"], 100)
+    plugin = company_slug(customer["slug"])
     mkt = marketplace_name(customer["slug"])
     owner, rname = repo["owner"], repo["name"]
     slugs = [a["slug"] for a in agents]
-    commands = ", ".join(f"/{s}" for s in slugs) or "(none yet)"
-    agent_list = "\n".join(f"- `/{a['slug']} <what to review or do>` - {_oneline(a['spec']['purpose'], 160)}" for a in agents) or "- (agents will appear here)"
+    commands = ", ".join(f"/{plugin}:{s}" for s in slugs) or "(none yet)"
+    agent_list = "\n".join(f"- `/{plugin}:{a['slug']} <what to review or do>` - {_first_sentence(a['spec']['purpose'], 160)}" for a in agents) or "- (agents will appear here)"
 
     files: dict[str, str] = {}
     for a in agents:
-        for rel, content in plugin_files(a["spec"], a["slug"], company).items():
-            files[f"plugins/{a['slug']}/{rel}"] = content
+        files.update(agent_files(a["spec"], a["slug"], plugin))
 
-    files[".claude-plugin/marketplace.json"] = json.dumps({
-        "name": mkt, "description": f"Nexara AI agents for {company}", "owner": {"name": "Nexara AI"},
-        "plugins": [{"name": a["slug"], "source": f"./plugins/{a['slug']}", "description": _oneline(a["spec"]["purpose"], 200)} for a in agents],
-    }, indent=2) + "\n"
-
-    enabled = {f"{s}@{mkt}": True for s in slugs}
-    # clone mode: working inside this repo registers it as a local marketplace (plugins load in place at every session start)
-    # and a background-safe `git pull` keeps the clone current
-    files[".claude/settings.json"] = json.dumps({
-        "extraKnownMarketplaces": {mkt: {"source": {"source": "directory", "path": "."}}},
-        "enabledPlugins": enabled,
-        "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "git pull --ff-only --quiet", "timeout": 15}]}]},
-    }, indent=2) + "\n"
-    # the customer's own project: github source + autoUpdate (the only way to turn auto-update on without the /plugin UI)
+    blurb = _cut(f"Nexara AI agents for {company}: " + "; ".join(a["spec"]["agent_name"] for a in agents), 250) if agents else f"Nexara AI agents for {company}"
+    files[".claude-plugin/plugin.json"] = json.dumps(
+        {"name": plugin, "description": blurb, "author": {"name": "Nexara AI"}, "keywords": ["nexara", "agents"]}, indent=2) + "\n"
+    market = {"name": mkt, "description": f"Nexara AI agents for {company}", "owner": {"name": "Nexara AI"},
+              "plugins": [{"name": plugin, "source": "./", "description": blurb}]}
+    old = sorted({x for x in (legacy or []) if x and x != plugin})
+    if old:
+        market["renames"] = {x: plugin for x in old}      # customers who installed an older per-agent plugin migrate instead of breaking
+    files[".claude-plugin/marketplace.json"] = json.dumps(market, indent=2) + "\n"
+    # for sharing with a whole project and for auto-update (the only way to turn it on without the /plugin toggle)
     files["snippets/project-settings.json"] = json.dumps({
         "extraKnownMarketplaces": {mkt: {"source": {"source": "github", "repo": f"{owner}/{rname}"}, "autoUpdate": True}},
-        "enabledPlugins": enabled,
+        "enabledPlugins": {f"{plugin}@{mkt}": True},
     }, indent=2) + "\n"
 
-    agent_bullets = "\n".join(f"- /{a['slug']}: {_oneline(a['spec']['purpose'], 200)}" for a in agents) or "- (none yet)"
-    tokens = dict(COMPANY=company, OWNER=owner, REPO=rname, MKT=mkt, PLUGINS=" ".join(slugs), COMMANDS=commands, AGENT_LIST=agent_list,
-                  AGENT_BULLETS=agent_bullets, SUPPORT_EMAIL=f"- **Email:** {support_email}\n" if support_email else "")
-    files["README.md"] = _fill(T.README_TMPL, **tokens)
-    files["START-HERE.md"] = _fill(T.START_HERE, **tokens)
-    files["SUPPORT.md"] = _fill(T.SUPPORT, **tokens)
-    files["CLAUDE.md"] = _fill(T.CLAUDE_TMPL, **tokens)
+    tokens = dict(COMPANY=company, OWNER=owner, REPO=rname, MKT=mkt, PLUGIN=plugin, COMMANDS=commands, AGENT_LIST=agent_list,
+                  SUPPORT_EMAIL=f"- **Email:** {support_email}\n" if support_email else "")
+    for path, tmpl in (("README.md", T.README_TMPL), ("START-HERE.md", T.START_HERE), ("SUPPORT.md", T.SUPPORT),
+                       ("scripts/setup.sh", T.SETUP_SH), ("scripts/doctor.sh", T.DOCTOR_SH), ("scripts/update.sh", T.UPDATE_SH),
+                       ("scripts/setup.ps1", T.SETUP_PS1), ("scripts/doctor.ps1", T.DOCTOR_PS1), ("scripts/update.ps1", T.UPDATE_PS1)):
+        files[path] = _fill(tmpl, **tokens)
     files["custom/README.md"] = T.CUSTOM_README
     files[".gitignore"] = T.GITIGNORE
     files[".github/ISSUE_TEMPLATE/support.md"] = T.ISSUE_TEMPLATE
-    files["scripts/setup.sh"] = _fill(T.SETUP_SH, **tokens)
-    files["scripts/doctor.sh"] = _fill(T.DOCTOR_SH, **tokens)
-    files["scripts/setup.ps1"] = _fill(T.SETUP_PS1, **tokens)
-    files["scripts/doctor.ps1"] = _fill(T.DOCTOR_PS1, **tokens)
     return files
 
 
 def is_executable(path: str) -> bool:
     return path.endswith(".sh")
+
+
+def plugin_zip(files: dict[str, str], plugin: str) -> bytes:
+    """The plugin as a zip whose single top-level folder is the plugin name (unzip into ~/.claude/skills/). For customers without
+    GitHub: no repo-only files, and nothing here updates itself."""
+    import io
+    import zipfile
+    skip = (".github/", "snippets/")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for path, content in sorted(files.items()):
+            if path.startswith(skip) or path.startswith("scripts/setup"):
+                continue
+            info = zipfile.ZipInfo(f"{plugin}/{path}", date_time=(2026, 1, 1, 0, 0, 0))
+            info.external_attr = (0o755 if is_executable(path) else 0o644) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(info, content)
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------- changelog

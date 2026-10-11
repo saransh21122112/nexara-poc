@@ -299,6 +299,13 @@ def customer(customer_id: str):
     return delivery_service.customer_view(customer_id)
 
 
+@app.get("/api/customers/{customer_id}/plugin-zip", dependencies=[Depends(factory_auth)])
+def customer_plugin_zip(customer_id: str):
+    """Fallback for customers without GitHub: the current plugin as a zip (no auto-update)."""
+    data, plugin = delivery_service.plugin_zip_for(customer_id, SUPPORT_EMAIL())
+    return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{plugin}.zip"'})
+
+
 @app.post("/api/customers/{customer_id}/notes", status_code=201, dependencies=[Depends(factory_auth)])
 def customer_note(customer_id: str, body: NoteIn):
     if not dbm.get_customer(customer_id):

@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS customers (id TEXT PRIMARY KEY, slug TEXT UNIQUE, com
   github_username TEXT, claude_status TEXT, os TEXT, created_at TEXT, onboarding TEXT);
 CREATE TABLE IF NOT EXISTS repos (id TEXT PRIMARY KEY, customer_id TEXT UNIQUE REFERENCES customers(id), owner TEXT, name TEXT,
   url TEXT, created_at TEXT, state TEXT, invite_status TEXT, invited_user TEXT, invitation_id TEXT, head_sha TEXT,
-  synced_at TEXT, last_error TEXT, files TEXT);
+  synced_at TEXT, last_error TEXT, files TEXT, layout INTEGER, legacy TEXT);
 CREATE TABLE IF NOT EXISTS repo_agents (id TEXT PRIMARY KEY, repo_id TEXT REFERENCES repos(id), agent_id TEXT REFERENCES agents(id),
   plugin_slug TEXT, spec_hash TEXT, added_at TEXT, synced_at TEXT, UNIQUE (repo_id, agent_id));
 CREATE TABLE IF NOT EXISTS email_verifications (id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id), email TEXT,
@@ -107,6 +107,11 @@ def init_db():
         for stmt in SCHEMA.split(";"):  # one statement at a time: works on both SQLite and Postgres
             if stmt.strip():
                 c.execute(stmt)
+        for col, typ in (("layout", "INTEGER"), ("legacy", "TEXT")):      # columns added after first release
+            if database_url():
+                c.execute(f"ALTER TABLE repos ADD COLUMN IF NOT EXISTS {col} {typ}")
+            elif col not in [r[1] for r in c.execute("PRAGMA table_info(repos)").fetchall()]:
+                c.execute(f"ALTER TABLE repos ADD COLUMN {col} {typ}")
 
 
 def _j(row, *json_cols):
@@ -355,14 +360,16 @@ def _repo(row):
         return None
     d = dict(row)
     d["files"] = json.loads(d["files"]) if d.get("files") else {}
+    d["layout"] = d.get("layout") or 2                      # rows from before the column existed are the old per-agent layout
+    d["legacy"] = json.loads(d["legacy"]) if d.get("legacy") else []
     return d
 
 
-def create_repo(customer_id: str, owner: str, name: str, url: str, state: str = "creating") -> dict:
+def create_repo(customer_id: str, owner: str, name: str, url: str, state: str = "creating", layout: int = 3) -> dict:
     rid = new_id("REPO")
     with db() as c:
-        c.execute("INSERT INTO repos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                  (rid, customer_id, owner, name, url, now(), state, "none", None, None, None, None, None, None))
+        c.execute("INSERT INTO repos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (rid, customer_id, owner, name, url, now(), state, "none", None, None, None, None, None, None, layout, json.dumps([])))
     return get_repo(rid)
 
 
@@ -376,7 +383,13 @@ def get_repo_for_customer(cid: str):
         return _repo(c.execute("SELECT * FROM repos WHERE customer_id=?", (cid,)).fetchone())
 
 
-_REPO_FIELDS = {"owner", "name", "url", "state", "invite_status", "invited_user", "invitation_id", "head_sha", "synced_at", "last_error"}
+_REPO_FIELDS = {"owner", "name", "url", "state", "invite_status", "invited_user", "invitation_id", "head_sha", "synced_at", "last_error", "layout"}
+
+
+def set_repo_legacy(rid: str, names: list[str]) -> None:
+    """Plugin names used by older layouts; kept forever so the marketplace `renames` map keeps migrating old installs."""
+    with db() as c:
+        c.execute("UPDATE repos SET legacy=? WHERE id=?", (json.dumps(sorted(set(names))), rid))
 
 
 def update_repo(rid: str, **fields) -> dict:

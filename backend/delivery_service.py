@@ -73,21 +73,38 @@ def unverified_reason(request: dict) -> str | None:
             f"them, or you can verify them another way and record how (Client Requests -> Mark verified).")
 
 
+def _unique(base: str, taken: set) -> str:
+    slug, n = base, 1
+    while slug in taken:
+        n += 1
+        slug = f"{base}-{n}"
+    return slug
+
+
+def _migrating(repo: dict) -> bool:
+    return (repo.get("layout") or 2) < 3          # layout 2 = one plugin per agent under plugins/; 3 = the repo root is the plugin
+
+
+def legacy_names(repo: dict) -> list[str]:
+    """Plugin names an older layout used (one plugin per agent): they go into the marketplace `renames` map for good."""
+    names = set(repo.get("legacy") or [])
+    if _migrating(repo):
+        names |= {ra["plugin_slug"] for ra in dbm.list_repo_agents(repo["id"])}
+    return sorted(names)
+
+
 def _entries(repo: dict, extra: dict | None = None) -> list[dict]:
-    """[{agent_id, slug, spec, spec_hash_synced}] for every agent in the repo (live spec), plus optionally one new agent."""
+    """[{agent_id, slug, spec, synced_hash}] for every agent in the repo (live spec), plus optionally one new agent.
+    A repo still on the old layout gets readable slugs recomputed (TokenSpendAnalyst -> token-spend-analyst) when it is next synced."""
     out, taken = [], set()
     for ra in dbm.list_repo_agents(repo["id"]):
         live = dbm.get_agent(ra["agent_id"])
         if live:
-            out.append({"agent_id": ra["agent_id"], "slug": ra["plugin_slug"], "spec": live["spec"], "synced_hash": ra["spec_hash"]})
-            taken.add(ra["plugin_slug"])
+            slug = _unique(repo_gen.plugin_slug(live["spec"]), taken) if _migrating(repo) else ra["plugin_slug"]
+            out.append({"agent_id": ra["agent_id"], "slug": slug, "spec": live["spec"], "synced_hash": ra["spec_hash"]})
+            taken.add(slug)
     if extra and extra["agent_id"] not in {e["agent_id"] for e in out}:
-        base = repo_gen.plugin_slug(extra["spec"])
-        slug, n = base, 1
-        while slug in taken:
-            n += 1
-            slug = f"{base}-{n}"
-        out.append({**extra, "slug": slug, "synced_hash": None})
+        out.append({**extra, "slug": _unique(repo_gen.plugin_slug(extra["spec"]), taken), "synced_hash": None})
     return out
 
 
@@ -101,23 +118,28 @@ def _repo_name_for(gh: GitHubClient, customer: dict) -> str:
 
 
 def onboarding_draft(customer: dict, repo_url: str, owner: str, name: str, agents: list[dict]) -> str:
+    """A message for a HUMAN to send. Leads with the one-line install; extra steps only for people who need them."""
     status = customer.get("claude_status")
-    osn = customer.get("os")
-    install = {"mac": "curl -fsSL https://claude.ai/install.sh | bash", "linux": "curl -fsSL https://claude.ai/install.sh | bash",
-               "windows": "irm https://claude.ai/install.ps1 | iex (in PowerShell)"}.get(osn or "", "see START-HERE.md for your system")
-    step = {
-        "have_claude_code": "You already use Claude Code, so you can skip the install step.",
-        "have_claude_account": "You have a Claude account: the only extra step is installing Claude Code (about two minutes): " + install + ".",
-        "no_claude": "You will need a paid Claude account (Pro, Max, Team or Enterprise; the free plan does not include Claude Code) and to install Claude Code: " + install + ". START-HERE.md walks through it, and we are happy to do a short call.",
-        "not_sure": "Run `claude --version` in a terminal. If it prints a version you are set; if not, START-HERE.md shows the two-minute install.",
+    plugin = repo_gen.company_slug(customer["slug"])
+    install = {"windows": "irm https://claude.ai/install.ps1 | iex   (in PowerShell)"}.get(customer.get("os") or "", "curl -fsSL https://claude.ai/install.sh | bash")
+    clone = (f"gh repo clone {owner}/{name} $HOME\\.claude\\skills\\{plugin}" if customer.get("os") == "windows"
+             else f"gh repo clone {owner}/{name} ~/.claude/skills/{plugin}")
+    prep = {
+        "have_claude_code": "You already use Claude Code, so that is all you need.",
+        "have_claude_account": f"You have a Claude account, so first install Claude Code (two minutes): {install} - then open a new terminal and run `claude` once to sign in.",
+        "no_claude": f"You will need a paid Claude plan (Pro, Max, Team or Enterprise; the free plan does not include Claude Code). Then install Claude Code: {install} - open a new terminal and run `claude` once to sign in. START-HERE.md walks through everything, and we are happy to do a short call.",
+        "not_sure": f"Run `claude --version` in a terminal. If it prints a version you are set; if not, install it with: {install}",
     }.get(status or "", "START-HERE.md covers installing Claude Code if you need it.")
     names = ", ".join(a["spec"]["agent_name"] for a in agents) or "your agent"
-    return (f"Hi,\n\nYour Claude Code agents ({names}) are ready in a private GitHub repository just for {customer['company_name']}:\n"
-            f"{repo_url}\n\n"
-            f"1. GitHub emails you an invitation to this repository (it expires after 7 days). Accept it: {repo_url}/invitations or the email.\n"
-            f"2. {step}\n"
-            f"3. Open {repo_url}/blob/main/START-HERE.md and run scripts/setup.sh (Windows: scripts/setup.ps1). It connects the agents to your project and turns on auto-update, so improvements we make arrive on their own.\n\n"
-            f"If anything is unclear, run scripts/doctor.sh and send us the output, or open an issue in the repository.\n\nBest regards,\nNexara AI\n")
+    cmds = ", ".join(f"/{plugin}:{a['slug']}" for a in agents)
+    return (f"Hi,\n\nYour Claude Code agents ({names}) are ready in a private GitHub repository just for {customer['company_name']}:\n{repo_url}\n\n"
+            f"1. GitHub emails you an invitation to that repository (it expires after 7 days). Accept it: {repo_url}/invitations\n"
+            f"2. {prep}\n"
+            f"3. Let git read the private repo once: `gh auth login` then `gh auth setup-git` (GitHub CLI: https://cli.github.com).\n"
+            f"4. Install your agents with one command:\n   {clone}\n"
+            f"5. Open Claude Code in any project and run {cmds or 'your agent'} followed by what you want done.\n\n"
+            f"To update later: `git -C ~/.claude/skills/{plugin} pull`. Prefer automatic updates, or no GitHub account? Both are explained in START-HERE.md in the repo "
+            f"(or ask us for a zip).\n\nIf anything is unclear, run scripts/doctor.sh and send us the output, or open an issue in the repository.\n\nBest regards,\nNexara AI\n")
 
 
 # ---------------------------------------------------------------- preview
@@ -146,7 +168,7 @@ def preview(gh: GitHubClient, agent_id: str, support_email: str = "") -> dict:
     in_repo = bool(repo) and dbm.get_repo_agent(repo["id"], agent_id) is not None
     name = repo["name"] if repo else _repo_name_for(gh, customer)
     owner = repo["owner"] if repo else gh.owner
-    files = repo_gen.repo_files(customer, {"owner": owner, "name": name}, entries, support_email)
+    files = repo_gen.repo_files(customer, {"owner": owner, "name": name}, entries, support_email, legacy_names(repo) if repo else [])
     url = repo["url"] if repo else f"https://github.com/{owner}/{name}"
     invited_already = bool(repo) and (repo.get("invited_user") or "").lower() == (user or "").lower() and repo.get("invite_status") in ("pending", "accepted")
     return {
@@ -154,6 +176,8 @@ def preview(gh: GitHubClient, agent_id: str, support_email: str = "") -> dict:
         "customer": {k: customer[k] for k in ("id", "company_name", "slug", "github_username", "claude_status", "os")},
         "repo": {"owner": owner, "name": name, "url": url, "exists": bool(repo), "private": True},
         "plugin_slug": next(e["slug"] for e in entries if e["agent_id"] == agent_id),
+        "plugin": repo_gen.company_slug(customer["slug"]),
+        "command": f"/{repo_gen.company_slug(customer['slug'])}:{next(e['slug'] for e in entries if e['agent_id'] == agent_id)}",
         "files": sorted(files) + ["CHANGELOG.md"],
         "request": {"id": request["id"], "company_name": request.get("company_name"), "contact_email": request.get("contact_email"),
                     "github_username": request.get("github_username"), "problem": (request.get("business_problem") or "")[:300]},
@@ -186,9 +210,13 @@ def _conflicts(files: dict[str, str], stored: dict[str, str], remote: dict[str, 
 
 def _push(gh: GitHubClient, customer: dict, repo: dict, entries: list[dict], message_lines: list[str], overwrite: bool,
           support_email: str) -> dict:
-    files = repo_gen.repo_files(customer, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email)
+    legacy = legacy_names(repo)
+    files = repo_gen.repo_files(customer, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy)
     base = gh.head(repo["name"])
     remote = gh.tree(repo["name"], base)
+    # The customer's own area (custom/) is created once if missing and then left strictly alone: even the starter file we ship there
+    # may be edited, and a reworded template must never be treated as a conflict or overwrite it.
+    files = {p: c for p, c in files.items() if repo_gen.is_tracked(p) or p not in remote}
     stored = dict(repo.get("files") or {})
     conflicts = _conflicts(files, stored, remote)
     if conflicts and not overwrite:
@@ -205,7 +233,8 @@ def _push(gh: GitHubClient, customer: dict, repo: dict, entries: list[dict], mes
     commit = gh.commit_files(repo["name"], base, changes, "Nexara: " + "; ".join(message_lines)[:200],
                              executable=frozenset(p for p in changes if changes[p] is not None and repo_gen.is_executable(p)))
     tracked = {p: repo_gen.git_blob_sha(c) for p, c in files.items() if repo_gen.is_tracked(p)}
-    dbm.update_repo(repo["id"], head_sha=commit, synced_at=dbm.now(), state="ready", last_error=None)
+    dbm.update_repo(repo["id"], head_sha=commit, synced_at=dbm.now(), state="ready", last_error=None, layout=repo_gen.GENERATOR_VERSION)
+    dbm.set_repo_legacy(repo["id"], legacy)
     dbm.set_repo_files(repo["id"], tracked)
     for e in entries:
         dbm.upsert_repo_agent(repo["id"], e["agent_id"], e["slug"], repo_gen.spec_hash(e["spec"]))
@@ -254,7 +283,8 @@ def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: boo
             invite_result = _invite(gh, customer, repo, user)
         url = repo["url"]
         return {"status": result["status"], "repo": {"owner": repo["owner"], "name": repo["name"], "url": url},
-                "commit": result["commit"], "changed": result["changed"], "plugin_slug": slug, "invite": invite_result,
+                "commit": result["commit"], "changed": result["changed"], "plugin_slug": slug, "plugin": repo_gen.company_slug(customer["slug"]),
+                "command": f"/{repo_gen.company_slug(customer['slug'])}:{slug}", "invite": invite_result,
                 "onboarding_draft": onboarding_draft(customer, url, repo["owner"], repo["name"], entries)}
 
 
@@ -379,8 +409,8 @@ def customer_view(customer_id: str) -> dict:
     if repo:
         entries = _entries(repo)
         stale = {e["agent_id"] for e in behind(entries)}
-        agents = [{"agent_id": e["agent_id"], "agent_name": e["spec"]["agent_name"], "plugin_slug": e["slug"], "behind": e["agent_id"] in stale}
-                  for e in entries]
+        agents = [{"agent_id": e["agent_id"], "agent_name": e["spec"]["agent_name"], "plugin_slug": e["slug"],
+                   "command": f"/{repo_gen.company_slug(cust['slug'])}:{e['slug']}", "behind": e["agent_id"] in stale} for e in entries]
     return {"customer": cust, "repo": {k: v for k, v in repo.items() if k != "files"} if repo else None, "agents": agents,
             "requests": requests, "events": dbm.list_events(customer_id)}
 
@@ -396,3 +426,19 @@ def attach_request(request_id: str, customer_id: str) -> dict:
     dbm.add_event(customer_id, "request_attached", {"request": request_id, "by": "staff", "previous_customer": previous,
                                                     "request_email": req.get("contact_email"), "request_github": req.get("github_username")})
     return {"request_id": request_id, "customer_id": customer_id}
+
+
+def plugin_zip_for(customer_id: str, support_email: str = "") -> tuple[bytes, str]:
+    """Fallback for customers without GitHub: the current plugin built from the live specs. Returns (zip bytes, plugin name)."""
+    cust = dbm.get_customer(customer_id)
+    if not cust:
+        raise DeliveryError("Customer not found", 404)
+    repo = dbm.get_repo_for_customer(customer_id)
+    if not repo:
+        raise DeliveryError("This customer has no delivered agents yet.", 409)
+    entries = _entries(repo)
+    if not entries:
+        raise DeliveryError("This customer has no delivered agents yet.", 409)
+    files = repo_gen.repo_files(cust, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy_names(repo))
+    plugin = repo_gen.company_slug(cust["slug"])
+    return repo_gen.plugin_zip(files, plugin), plugin

@@ -11,22 +11,25 @@ Stack: vanilla HTML/CSS/JS, FastAPI, SQLite or Postgres, LangChain + LangGraph (
 1. **Request** (`/request`): the company describes the problem and gives their **GitHub username** and whether they already use Claude Code.
 2. **Build and test** (`/factory`): generate the spec with an LLM, edit it, run it in the Playground, run the scenario tests.
 3. **Deliver** (Agent Builder -> *Deliver to customer repo*): a preview shows the repo name, file list, who would be invited and an onboarding-message draft. Nothing happens until you confirm. Then the factory creates a **private** repo `nexara-<company>`, commits everything in one commit, and (optionally) invites the customer as a collaborator. A second agent for the same company goes into the **same** repo.
-4. **Customer**: accepts the GitHub invite, runs `scripts/setup.sh` (Windows: `setup.ps1`) which installs Claude Code only after asking and connects the agents to their project with auto-update on, or simply clones the repo and opens it in Claude Code.
+4. **Customer**: accepts the GitHub invite, then runs **one command**: `gh repo clone OWNER/REPO ~/.claude/skills/<company>` (Claude Code loads any folder with a `.claude-plugin/plugin.json` placed there, in every session, with no flags, settings or install step). Alternatives: one-command marketplace install with auto-update (`claude plugin install <company> --marketplace OWNER/REPO`), or, for customers without GitHub, a **zip** downloaded from the Customers page and unzipped into the same folder. `scripts/setup.sh` / `doctor.sh` / `update.sh` help people who are new to Claude Code.
 5. **Ongoing** (*Customers* page): per company - repo, invite status (detected from GitHub), agents and whether the repo is behind, onboarding checklist, open GitHub issues, hand-edit warnings, timeline and support notes. Edit an agent -> *Sync to repo* (confirm) pushes a commit and a CHANGELOG entry.
 
 Nothing outward-facing is automatic: creating a repo, inviting someone, pushing an update and re-inviting each need an explicit confirm. The onboarding message is a draft you send yourself.
 
 ## What a customer repo contains
+The repo root **is** one Claude Code plugin named after the company, holding all of that company's agents:
 ```
-README.md START-HERE.md SUPPORT.md CHANGELOG.md CLAUDE.md
-.claude-plugin/marketplace.json     marketplace nexara-<company>, one relative-path plugin per agent, NO version (versioned by commit SHA)
-.claude/settings.json               clone mode: registers the repo itself + git pull on session start
-plugins/<agent>/                    agents/ (read-only: Read, Grep, Glob), skills/, commands/, hooks/hooks.optional.json (inactive)
-custom/                             the customer's own area: Nexara never touches it
-scripts/ setup.sh doctor.sh (+ .ps1)    guided setup / diagnostics
-snippets/project-settings.json      the settings block for the customer's own project (github source + autoUpdate: true)
+.claude-plugin/plugin.json        plugin manifest (no version: versioned by commit SHA, so every push is an update)
+.claude-plugin/marketplace.json   marketplace nexara-<company>: one plugin, source "./"; `renames` maps old plugin names so earlier installs migrate
+agents/<agent>.md                 read-only subagent (Read, Grep, Glob)
+skills/<agent>/SKILL.md           the entry point: /<company>:<agent> <task>  (one skill + one agent per agent, no duplicates)
+README.md START-HERE.md SUPPORT.md CHANGELOG.md custom/ .gitignore .github/ISSUE_TEMPLATE/
+scripts/ setup.sh doctor.sh update.sh (+ .ps1)    guided setup / diagnostics / one-command update
+snippets/project-settings.json    settings block (github source, autoUpdate true) to share the plugin with a whole project
 ```
-Auto-update, as verified against real Claude Code and real GitHub: with that settings block alone (no manual install) Claude Code fetches the private marketplace, records `autoUpdate`, and loads the plugin. A push from the factory reaches the customer after Claude Code's background refresh (a few minutes after a session starts, applied on next launch or `/reload-plugins`). It needs working git credentials (`gh auth login && gh auth setup-git`) and the customer trusting the folder.
+Agent names are readable (`TokenSpendAnalyst` becomes `token-spend-analyst`), descriptions stay short (they are always in Claude's context and drive routing), and instructions that mention factory-only test tools (`calculator`, `lookup_business_data`) are rewritten: the agent does careful arithmetic by hand, shows its working, and says so.
+
+**Updating:** clone installs run `git -C ~/.claude/skills/<company> pull` (or `scripts/update.sh`); marketplace installs update automatically once the customer switches on auto-update (Claude Code only turns it on through its `/plugin` toggle or the settings snippet). There is deliberately **no** auto-pull hook in the repo (a hook is code running on the customer's machine). Both need git credentials that can read the private repo. Old per-agent repos are migrated by *Sync to repo* (old files removed unless hand-edited, `custom/` untouched, `renames` recorded). Use one install method per machine: the same plugin name loads only once.
 
 ## Setup
 ### GitHub (needed for delivery)
@@ -65,22 +68,12 @@ SQLite by default (`data/nexara.db`); set `DATABASE_URL=postgresql://...` for Po
 Delivery: `GET /api/github/status` `GET /api/agents/{id}/delivery-preview` `POST /api/agents/{id}/deliver` `GET /api/customers` `GET /api/customers/{id}` `POST /api/customers/{id}/notes|onboarding|refresh|sync|reinvite|collaborators` (mutations require `confirm: true`).
 Verification: `POST /api/verify` (public) `POST /api/requests/{id}/resend-verification|verify-manually|attach-customer` `GET /api/mail/status`.
 
-## Tests (`pytest`, 100+ tests; SQLite and Postgres)
-Fake GitHub (`tests/fake_github.py`) for the client, delivery, sync, conflict, invite and failure paths; generator tests including the real `claude plugin validate`; sandboxed runs of the generated `setup.sh`/`doctor.sh`. A fake only proves internal consistency, so the same flow was also run live:
-- **Verified live against real GitHub** (throwaway private repo, no invitations sent): create-as-private, one-commit delivery with executable bits, sync, no-op sync, a hand edit made through GitHub's API detected as a conflict and not overwritten, overwrite, CHANGELOG, issues API.
-- **Verified with the real Claude CLI:** the generated marketplace and plugins validate; a customer project with only the generated settings block loaded the private marketplace, the plugin, `/<agent>` and the subagent in a clean config; the agent found planted bugs in a sample repo and did not open `.env`; a pushed update arrived as a new commit-SHA version.
-- **Not verified:** Windows `.ps1` scripts (no PowerShell here), a real customer accepting an invitation, background auto-update timing on a customer's machine over days, the `anthropic`/`openai` providers against their real APIs, and delivery on the Render deployment (needs `GITHUB_TOKEN` there).
-
-## Protection against forged requests (the request form is public)
-The form is unauthenticated and the email is not verified, so a stranger could claim to be an existing customer. Defences:
-- A request joins an existing customer only if **company, GitHub username and email all match**; otherwise it becomes a separate customer with its own repo. Merging is a deliberate staff action (Client Requests -> *Attach to this customer*, with a confirmation and a timeline entry).
-- Only the customer's **established** GitHub user is ever invited. A request naming a different user blocks the invitation before anything is created; that person must be added explicitly (*Invite another person*) after you verify them.
-- Adding to an **existing** repo shows who submitted the request and needs an explicit acknowledgement (`existing_repo_ack`).
-- **Email verification:** submitting the form emails the requester a confirmation link. **Nothing can be delivered for a request until its email is verified** (the preview shows why it is blocked and the confirm button is disabled). The link is single-use, expires in 48 hours, and is opened with a click on a page (so mail scanners that pre-open links cannot confirm for the user). The token sits in the URL fragment, so it never reaches server logs or referrers, and only its hash is stored. The email is a fixed template that contains nothing the requester typed. Limits: 1 email per address per 5 minutes, 3 per address per day, per-IP limits on the form and on confirm attempts. The public response is identical whether or not mail is configured.
-- **Staff alternatives:** *Resend confirmation email* (confirm click) or *Mark verified...* (you confirmed them another way; the note is saved in the customer's timeline).
-- **No SMTP yet?** Set `REQUIRE_EMAIL_VERIFICATION=false` (default is on). Delivery then works without a confirmation email, every preview shows a warning, the header says "Email verification OFF", and no mail is attempted. The other protections (all-three-attributes matching, established-GitHub-user invites, existing-repo acknowledgement, your confirm click) stay on, so you remain the control: check each request before delivering. Turn it back on once SMTP works.
-- Verifying an email proves the mailbox, not the GitHub account: invitations still follow the rules above.
-- Setup: SMTP via `SMTP_HOST`, `SMTP_FROM`, `SMTP_USER`, `SMTP_PASSWORD` (`SMTP_SECURITY=starttls|ssl|none`); see `.env.example`. Verified against a local SMTP server, not against a real provider (no credentials here). `MAIL_MODE=log` prints messages to the server log for local development.
+## Tests (`pytest`, 160+ tests; SQLite and Postgres)
+Fake GitHub (`tests/fake_github.py`) for the client, delivery, sync, conflict, invite, migration and failure paths; generator tests including the real `claude plugin validate` and a real check that a plain folder under `skills/` loads with exactly one skill and one agent per agent; sandboxed runs of the generated `setup.sh` / `doctor.sh` / `update.sh`; an in-place DB upgrade test on SQLite and Postgres. A fake only proves internal consistency, so the same flows were also run live:
+- **Real GitHub** (private repos, no invitations sent): create-as-private, one-commit delivery with executable bits, sync, no-op sync, hand edits detected as conflicts, overwrite, and a **real v2 -> v3 migration** of an existing repo. That live run found a bug the fake missed (a reworded starter file in `custom/` blocked the sync); fixed and covered by a regression test.
+- **Real Claude Code on clean machines** (fresh `HOME`, no settings): (A) `gh repo clone ... ~/.claude/skills/<name>` then the skill runs and finds planted bugs; (B) `claude plugin install <name> --marketplace OWNER/REPO`; (C) the zip unzipped into `~/.claude/skills`; `setup.sh` and `doctor.sh` run for real; an update pushed from the factory arrived via `update.sh` (path A) and via `marketplace update` + `plugin update` (path B, version = commit SHA); the real interactive terminal UI offers the skill in its slash menu.
+- **Arithmetic agent**, 3 of 3 trials fully correct on a known dataset (and earlier 4 of 5 with the old text; one run once refused because it had no calculator).
+- **Not verified:** Windows `.ps1` scripts (no PowerShell here), the interactive trust prompt (the folder was pre-trusted), a real customer's first run on their own machine, background auto-update timing over days, the `anthropic`/`openai` providers against their real APIs, and delivery on the Render deployment.
 
 ## Limits and honest notes
 - Demo authentication (one shared password, in-memory tokens) - **not production security**; no billing or multi-tenancy.
