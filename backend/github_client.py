@@ -144,8 +144,9 @@ class GitHubClient:
         return base64.b64decode(d["content"]).decode(errors="replace") if d.get("encoding") == "base64" else d["content"]
 
     def commit_files(self, name: str, base_commit: str, changes: dict[str, str | None], message: str,
-                     executable: frozenset[str] = frozenset(), branch: str = "main") -> str:
-        """One commit applying `changes` ({path: text, or None to delete}) on top of base_commit. Returns the new commit sha."""
+                     executable: frozenset[str] = frozenset(), branch: str | None = "main") -> str:
+        """One commit applying `changes` ({path: text, or None to delete}) on top of base_commit. Returns the new commit sha.
+        branch=None creates the commit without moving any branch (the caller points a branch at it)."""
         base_tree = self._req("GET", f"{self._repo(name)}/git/commits/{base_commit}").json()["tree"]["sha"]
         entries = []
         for path, content in sorted(changes.items()):
@@ -158,10 +159,56 @@ class GitHubClient:
         tree = self._req("POST", f"{self._repo(name)}/git/trees", json={"base_tree": base_tree, "tree": entries}).json()["sha"]
         commit = self._req("POST", f"{self._repo(name)}/git/commits",
                            json={"message": message, "tree": tree, "parents": [base_commit]}).json()["sha"]
+        if branch is None:
+            return commit
         r = self._req("PATCH", f"{self._repo(name)}/git/refs/heads/{branch}", ok=(200, 422), json={"sha": commit, "force": False})
         if r.status_code == 422:
             raise BranchMoved()
         return commit
+
+    # ---------------------------------------------------------------- branches and pull requests
+    def branch_head(self, name: str, branch: str) -> str | None:
+        r = self._req("GET", f"{self._repo(name)}/git/ref/heads/{branch}", ok=(200, 404))
+        return r.json()["object"]["sha"] if r.status_code == 200 else None
+
+    def set_branch(self, name: str, branch: str, sha: str):
+        """Create `branch` at `sha`, or move it there (force). Only ever called for Nexara's own staging branch."""
+        if self.branch_head(name, branch) is None:
+            self._req("POST", f"{self._repo(name)}/git/refs", json={"ref": f"refs/heads/{branch}", "sha": sha})
+        else:
+            self._req("PATCH", f"{self._repo(name)}/git/refs/heads/{branch}", json={"sha": sha, "force": True})
+
+    def commits_ahead(self, name: str, base: str, head: str) -> list[dict]:
+        """Commits on `head` that are not on `base` (oldest first): [{sha, message}]."""
+        d = self._req("GET", f"{self._repo(name)}/compare/{base}...{head}").json()
+        return [{"sha": c["sha"], "message": c["commit"]["message"]} for c in d.get("commits", [])]
+
+    def _pr(self, method: str, path: str, ok: tuple = (200, 201), **kw) -> httpx.Response:
+        try:
+            return self._req(method, path, ok=ok, **kw)
+        except GitHubError as e:
+            if e.status in (403, 404):
+                raise GitHubError("GitHub refused the pull request call. The token needs 'Pull requests: read and write' "
+                                  "(fine-grained) or the 'repo' scope (classic) on this repository.", e.status, "pr_permission") from None
+            raise
+
+    @staticmethod
+    def _pr_out(d: dict) -> dict:
+        state = "merged" if d.get("merged") or d.get("merged_at") else d.get("state", "open")
+        return {"number": d["number"], "url": d["html_url"], "state": state, "title": d.get("title")}
+
+    def find_open_pr(self, name: str, head: str, base: str = "main") -> dict | None:
+        rows = self._pr("GET", f"{self._repo(name)}/pulls", params={"state": "open", "head": f"{self.owner}:{head}", "base": base}).json()
+        return self._pr_out(rows[0]) if rows else None
+
+    def create_pr(self, name: str, head: str, base: str, title: str, body: str) -> dict:
+        return self._pr_out(self._pr("POST", f"{self._repo(name)}/pulls", json={"title": title[:250], "head": head, "base": base, "body": body}).json())
+
+    def update_pr(self, name: str, number: int, title: str, body: str) -> dict:
+        return self._pr_out(self._pr("PATCH", f"{self._repo(name)}/pulls/{int(number)}", json={"title": title[:250], "body": body}).json())
+
+    def get_pr(self, name: str, number: int) -> dict:
+        return self._pr_out(self._pr("GET", f"{self._repo(name)}/pulls/{int(number)}").json())
 
     # ---------------------------------------------------------------- collaborators
     def add_collaborator(self, name: str, username: str, permission: str = "push") -> dict:

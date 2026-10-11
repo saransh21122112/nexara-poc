@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS email_verifications (id TEXT PRIMARY KEY, request_id 
   token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT, used_at TEXT);
 CREATE TABLE IF NOT EXISTS repo_events (id TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(id), repo_id TEXT,
   at TEXT, kind TEXT, detail TEXT);
+CREATE TABLE IF NOT EXISTS repo_changes (id TEXT PRIMARY KEY, repo_id TEXT REFERENCES repos(id), branch TEXT, pr_number INTEGER,
+  pr_url TEXT, state TEXT, title TEXT, summary TEXT, commit_sha TEXT, files TEXT, agents TEXT, created_at TEXT, updated_at TEXT, merged_at TEXT);
 CREATE TABLE IF NOT EXISTS build_events (id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id), seq INTEGER, at TEXT,
   stage TEXT, state TEXT, title TEXT, detail TEXT)
 """
@@ -529,3 +531,42 @@ def interrupt_stale_builds() -> int:
             add_build_event(rid, last["stage"], "interrupted", "The server restarted during this step. Start the build again.")
             n += 1
     return n
+
+
+# ------------------------------------------------------------------ proposed changes (dev branch + pull request in a customer repo)
+def create_change(repo_id: str, branch: str, pr_number: int, pr_url: str, title: str, summary: list, commit_sha: str,
+                  files: dict, agents: list) -> dict:
+    """files = tracked path -> blob sha as it will be on main once merged; agents = [{agent_id, slug, spec_hash}]."""
+    cid = new_id("CHG")
+    with db() as c:
+        c.execute("INSERT INTO repo_changes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (cid, repo_id, branch, pr_number, pr_url, "open", title, json.dumps(summary), commit_sha, json.dumps(files),
+                   json.dumps(agents), now(), now(), None))
+    return get_change(cid)
+
+
+def get_change(cid: str):
+    with db() as c:
+        return _j(c.execute("SELECT * FROM repo_changes WHERE id=?", (cid,)).fetchone(), "summary", "files", "agents")
+
+
+def latest_change(repo_id: str):
+    with db() as c:
+        return _j(c.execute("SELECT * FROM repo_changes WHERE repo_id=? ORDER BY created_at DESC LIMIT 1", (repo_id,)).fetchone(),
+                  "summary", "files", "agents")
+
+
+def open_change(repo_id: str):
+    with db() as c:
+        return _j(c.execute("SELECT * FROM repo_changes WHERE repo_id=? AND state='open' ORDER BY created_at DESC LIMIT 1", (repo_id,)).fetchone(),
+                  "summary", "files", "agents")
+
+
+def update_change(cid: str, **fields) -> dict:
+    bad = set(fields) - {"state", "title", "summary", "commit_sha", "files", "agents", "pr_number", "pr_url", "merged_at"}
+    if bad:
+        raise ValueError(f"unknown change fields: {bad}")
+    vals = [json.dumps(v) if k in ("summary", "files", "agents") else v for k, v in fields.items()]
+    with db() as c:
+        c.execute(f"UPDATE repo_changes SET {', '.join(k + '=?' for k in fields)}, updated_at=? WHERE id=?", (*vals, now(), cid))
+    return get_change(cid)

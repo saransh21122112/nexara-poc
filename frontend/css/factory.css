@@ -78,3 +78,9 @@ dl{background:var(--well);border:1px solid var(--line);border-radius:12px;paddin
 .tree{display:grid;gap:4px;max-height:360px;overflow:auto}.tree div{display:flex;gap:8px;align-items:center;animation:rise .3s both;animation-delay:calc(var(--i,0)*.04s)}.tree .i{color:var(--ok);width:15px;height:15px}.tree code{font-size:12.5px;overflow-wrap:anywhere}.tree small{margin-left:auto}
 .badge{display:inline-flex;align-items:center;gap:6px;font:600 12.5px Inter;padding:3px 10px;border-radius:99px}
 @media(max-width:820px){.split.live{grid-template-columns:1fr}}
+/* changes / revise / diffs */
+.sd{border:1px solid var(--line);border-radius:10px;margin:8px 0;overflow:hidden;background:#fff}.sd>b{display:block;padding:6px 12px;background:var(--well);border-bottom:1px solid var(--line);font-size:12px;letter-spacing:.05em;text-transform:uppercase;color:var(--g2)}
+.ln{padding:3px 12px;font:12.5px ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.ln.add{background:#e9f7ee;color:#14532d}.ln.del{background:#fdecef;color:#7f1230}.ln.hunk{background:var(--gsoft);color:var(--g2)}
+.fd{border:1px solid var(--line);border-radius:10px;margin:8px 0;background:#fff}.fd>summary{padding:9px 12px;cursor:pointer;display:flex;gap:10px;align-items:center;color:var(--text)}.fd .dv{border-top:1px solid var(--line);max-height:380px;overflow:auto}
+.panel.revise{border-left:4px solid var(--g1)}
+@media(max-width:640px){.panel table{min-width:480px}}

@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from . import agent_service, build_service, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
 from .github_client import GitHubClient, GitHubError, NotConfigured as GitHubNotConfigured  # noqa: E402
 from .models import (AGENT_TYPES, AgentSpec, AssistIn, AttachIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
-                     ManualVerifyIn, ProviderIn, RequestIn, RunIn, SyncIn, VerifyIn)
+                     ManualVerifyIn, ProviderIn, RequestIn, ReviseIn, RunIn, SyncIn, VerifyIn)
 from .providers import NotConfigured, UpstreamError  # noqa: E402
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
@@ -326,6 +326,14 @@ def put_agent(agent_id: str, spec: AgentSpec):
     return dbm.update_agent_spec(agent_id, spec.model_dump())
 
 
+@app.post("/api/agents/{agent_id}/revise", dependencies=[Depends(factory_auth)])
+async def revise_agent(agent_id: str, body: ReviseIn):
+    """Propose a changed spec from a plain-words request. Saves nothing: review it, then PUT /api/agents/{id}, then open the PR."""
+    a = _agent_or_404(agent_id)
+    spec, provider, model = await agent_service.revise_spec(a["spec"], body.instruction, dbm.get_request(a["request_id"]))
+    return {"current": a["spec"], "proposed": spec, "provider": provider, "model": model}
+
+
 @app.post("/api/agents/{agent_id}/run", dependencies=[Depends(factory_auth)])
 async def run_agent(agent_id: str, body: RunIn):
     return await agent_service.run_agent(_agent_or_404(agent_id), body.task)
@@ -356,7 +364,7 @@ def deliver(agent_id: str, body: DeliverIn):
     _agent_or_404(agent_id)
     _confirmed(body.confirm, "create/update the customer's private GitHub repository" + (" and invite them as a collaborator" if body.invite else ""))
     limit("gh", "factory", 20, 60, "delivery actions")
-    return delivery_service.deliver(get_github(), agent_id, invite=body.invite, support_email=SUPPORT_EMAIL(), existing_repo_ack=body.existing_repo_ack)
+    return delivery_service.deliver(get_github(), agent_id, invite=body.invite, support_email=SUPPORT_EMAIL(), existing_repo_ack=body.existing_repo_ack, overwrite_dev=body.overwrite_dev)
 
 
 @app.post("/api/requests/{request_id}/attach-customer", dependencies=[Depends(factory_auth)])
@@ -405,9 +413,16 @@ def customer_refresh(customer_id: str):
 
 @app.post("/api/customers/{customer_id}/sync", dependencies=[Depends(factory_auth)])
 def customer_sync(customer_id: str, body: SyncIn):
-    _confirmed(body.confirm, "push the latest agent versions to the customer's repository")
+    _confirmed(body.confirm, "put the latest versions on the repository's dev branch and open a pull request into main (nothing is merged)")
     limit("gh", "factory", 20, 60, "delivery actions")
-    return delivery_service.sync(get_github(), customer_id, overwrite=body.overwrite_conflicts, support_email=SUPPORT_EMAIL())
+    return delivery_service.sync(get_github(), customer_id, overwrite=body.overwrite_conflicts, support_email=SUPPORT_EMAIL(),
+                                 overwrite_dev=body.overwrite_dev)
+
+
+@app.get("/api/customers/{customer_id}/diff", dependencies=[Depends(factory_auth)])
+def customer_diff(customer_id: str):
+    limit("gh", "factory", 20, 60, "delivery actions")
+    return delivery_service.diff(get_github(), customer_id, SUPPORT_EMAIL())
 
 
 @app.post("/api/customers/{customer_id}/reinvite", dependencies=[Depends(factory_auth)])
