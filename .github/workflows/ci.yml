@@ -1,0 +1,61 @@
+name: CI
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+jobs:
+  spec-gate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Spec-driven development gate
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: python scripts/check_spec.py
+
+  backend:
+    name: Backend tests (${{ matrix.db }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_PASSWORD: pw, POSTGRES_DB: t }
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - name: pytest (everything except browser tests)
+        env:
+          TEST_DATABASE_URL: ${{ matrix.db == 'postgres' && 'postgresql://postgres:pw@localhost:5433/t' || '' }}
+        run: python -m pytest -q tests -m "not ui"
+
+  frontend:
+    name: Frontend tests (JS syntax + real browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - name: JavaScript syntax check (every file served to browsers)
+        run: |
+          set -e
+          for f in frontend/js/*.js; do node --check "$f"; done
+          echo "checked $(ls frontend/js/*.js | wc -l) files"
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - name: Install Chromium for Playwright
+        run: python -m playwright install --with-deps chromium
+      - name: Browser tests (overflow, scrollbars, accessibility, phone, no-JS, forms, dashboard)
+        run: python -m pytest -q tests -m ui

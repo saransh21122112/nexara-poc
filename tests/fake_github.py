@@ -62,6 +62,33 @@ class FakeGitHub:
             tree[path] = ("100644", blob_sha(content))
         return self._commit(r, tree, [head], f"manual edit of {path}")
 
+    def commit_on(self, repo: str, branch: str, path: str, content: str, message: str) -> str:
+        """Simulate someone committing to a non-main branch."""
+        r = self.repos[repo]
+        head = r["branches"][branch]
+        tree = dict(r["trees"][r["commits"][head]["tree"]])
+        r["blobs"][blob_sha(content)] = content
+        tree[path] = ("100644", blob_sha(content))
+        tsha = hashlib.sha1(json.dumps(sorted(tree.items())).encode()).hexdigest()
+        r["trees"][tsha] = tree
+        csha = hashlib.sha1(f"{tsha}{head}{message}{next(self._ids)}".encode()).hexdigest()
+        r["commits"][csha] = {"tree": tsha, "parents": [head], "message": message}
+        r["branches"][branch] = csha
+        return csha
+
+    def merge_pr(self, repo: str, number: int):
+        """Simulate a person pressing Merge: main takes the PR branch's tree (a merge commit)."""
+        r = self.repos[repo]
+        pr = r["pulls"][number]
+        head, base = r["branches"][pr["head"]], r["branches"][pr["base"]]
+        csha = hashlib.sha1(f"merge{head}{base}{next(self._ids)}".encode()).hexdigest()
+        r["commits"][csha] = {"tree": r["commits"][head]["tree"], "parents": [base, head], "message": f"Merge pull request #{number}"}
+        r["branches"][pr["base"]] = csha
+        pr.update(state="closed", merged=True)
+
+    def close_pr(self, repo: str, number: int):
+        self.repos[repo]["pulls"][number].update(state="closed", merged=False)
+
     def files(self, repo: str, ref="main") -> dict[str, str]:
         r = self.repos[repo]
         tree = r["trees"][r["commits"][r["branches"][ref]]["tree"]]
@@ -140,7 +167,7 @@ class FakeGitHub:
             if name in fake.repos:
                 return JSONResponse({"message": "Repository creation failed.", "errors": [{"message": "name already exists on this account"}]}, status_code=422)
             r = {"private": False if fake.force_public else bool(body.get("private")), "branches": {}, "commits": {}, "trees": {}, "blobs": {},
-                 "collab": set(), "invites": {}, "issues": [], "description": body.get("description", "")}
+                 "collab": set(), "invites": {}, "issues": [], "pulls": {}, "description": body.get("description", "")}
             fake.repos[name] = r
             r["blobs"][blob_sha("# " + name + "\n")] = "# " + name + "\n"
             fake._commit(r, {"README.md": ("100644", blob_sha("# " + name + "\n"))}, [], "Initial commit")
@@ -166,6 +193,83 @@ class FakeGitHub:
         def ref(owner: str, name: str, branch: str):
             r = repo_or_404(owner, name)
             return NF() if r is None or branch not in r["branches"] else {"object": {"sha": r["branches"][branch]}}
+
+        @app.post("/repos/{owner}/{name}/git/refs")
+        async def post_ref(owner: str, name: str, request: Request):
+            r = repo_or_404(owner, name)
+            if r is None:
+                return NF()
+            b = await request.json()
+            branch = b["ref"].removeprefix("refs/heads/")
+            if branch in r["branches"] or b["sha"] not in r["commits"]:
+                return JSONResponse({"message": "Reference already exists"}, status_code=422)
+            r["branches"][branch] = b["sha"]
+            return JSONResponse({"ref": b["ref"], "object": {"sha": b["sha"]}}, status_code=201)
+
+        def ancestors(r, sha):
+            seen, stack = set(), [sha]
+            while stack:
+                c = stack.pop()
+                if c not in seen:
+                    seen.add(c)
+                    stack.extend(r["commits"][c]["parents"])
+            return seen
+
+        @app.get("/repos/{owner}/{name}/compare/{spec}")
+        def compare(owner: str, name: str, spec: str):
+            r = repo_or_404(owner, name)
+            if r is None:
+                return NF()
+            base, head = spec.split("...")
+            if base not in r["branches"] or head not in r["branches"]:
+                return NF()
+            bs, hs = ancestors(r, r["branches"][base]), ancestors(r, r["branches"][head])
+            only = [c for c in hs - bs]
+            # oldest first: a commit comes after its parents
+            order = sorted(only, key=lambda c: len(ancestors(r, c)))
+            return {"ahead_by": len(order), "behind_by": len(bs - hs),
+                    "commits": [{"sha": c, "commit": {"message": r["commits"][c]["message"]}} for c in order]}
+
+        def pr_json(owner, name, p):
+            return {"number": p["number"], "title": p["title"], "body": p["body"], "state": p["state"], "merged": p["merged"],
+                    "html_url": f"https://github.com/{owner}/{name}/pull/{p['number']}"}
+
+        @app.get("/repos/{owner}/{name}/pulls")
+        def list_pulls(owner: str, name: str, state: str = "open", head: str = "", base: str = ""):
+            r = repo_or_404(owner, name)
+            if r is None:
+                return NF()
+            want = head.split(":")[-1] if head else None
+            return [pr_json(owner, name, p) for p in r["pulls"].values()
+                    if p["state"] == state and (want is None or p["head"] == want) and (not base or p["base"] == base)]
+
+        @app.post("/repos/{owner}/{name}/pulls")
+        async def create_pull(owner: str, name: str, request: Request):
+            r = repo_or_404(owner, name)
+            if r is None:
+                return NF()
+            b = await request.json()
+            if b["head"] not in r["branches"] or b["base"] not in r["branches"]:
+                return JSONResponse({"message": "Validation Failed"}, status_code=422)
+            if any(p["state"] == "open" and p["head"] == b["head"] and p["base"] == b["base"] for p in r["pulls"].values()):
+                return JSONResponse({"message": "A pull request already exists"}, status_code=422)
+            n = len(r["pulls"]) + 1
+            r["pulls"][n] = {"number": n, "title": b["title"], "body": b.get("body", ""), "head": b["head"], "base": b["base"], "state": "open", "merged": False}
+            return JSONResponse(pr_json(owner, name, r["pulls"][n]), status_code=201)
+
+        @app.get("/repos/{owner}/{name}/pulls/{n}")
+        def get_pull(owner: str, name: str, n: int):
+            r = repo_or_404(owner, name)
+            return NF() if r is None or n not in r["pulls"] else pr_json(owner, name, r["pulls"][n])
+
+        @app.patch("/repos/{owner}/{name}/pulls/{n}")
+        async def patch_pull(owner: str, name: str, n: int, request: Request):
+            r = repo_or_404(owner, name)
+            if r is None or n not in r["pulls"]:
+                return NF()
+            b = await request.json()
+            r["pulls"][n].update(title=b.get("title", r["pulls"][n]["title"]), body=b.get("body", r["pulls"][n]["body"]))
+            return pr_json(owner, name, r["pulls"][n])
 
         @app.get("/repos/{owner}/{name}/git/commits/{sha}")
         def commit(owner: str, name: str, sha: str):

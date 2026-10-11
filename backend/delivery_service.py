@@ -2,6 +2,7 @@
 Rules: every outward action (create repo, push, invite) is explicit (the API requires confirm=true); nothing the customer or an
 engineer edited by hand is silently overwritten (per-file blob SHAs from the last sync are compared with the remote);
 a partial failure leaves the repo in `needs_retry` so a retry continues instead of creating a duplicate."""
+import difflib
 import os
 import threading
 
@@ -17,6 +18,12 @@ class DeliveryError(Exception):
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
         self.status = status
+
+
+class DevBranchBusy(DeliveryError):
+    def __init__(self, authors: list[str]):
+        super().__init__("The 'dev' branch of this repository has commits that Nexara did not make: "
+                         + "; ".join(a[:80] for a in authors[:3]) + ". Look at them first, or retry with overwrite_dev to replace them.", 409)
 
 
 class Conflict(DeliveryError):
@@ -208,8 +215,12 @@ def _conflicts(files: dict[str, str], stored: dict[str, str], remote: dict[str, 
     return out
 
 
-def _push(gh: GitHubClient, customer: dict, repo: dict, entries: list[dict], message_lines: list[str], overwrite: bool,
-          support_email: str) -> dict:
+DEV = "dev"
+MAIN = "main"
+
+
+def _plan(gh: GitHubClient, customer: dict, repo: dict, entries: list[dict], message_lines: list[str], overwrite: bool, support_email: str) -> dict:
+    """Pure computation against what is on main right now: the files to write, hand-edit conflicts and the resulting changes."""
     legacy = legacy_names(repo)
     files = repo_gen.repo_files(customer, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy)
     base = gh.head(repo["name"])
@@ -225,26 +236,72 @@ def _push(gh: GitHubClient, customer: dict, repo: dict, entries: list[dict], mes
     for path, known in stored.items():
         if path not in files and remote.get(path) is not None:
             changes[path] = None                      # no longer generated -> remove
-    if not changes:
-        return {"status": "up_to_date", "commit": base, "changed": []}
-    entry = repo_gen.changelog_entry(message_lines)
-    old = gh.blob_text(repo["name"], remote["CHANGELOG.md"]) if stored and "CHANGELOG.md" in remote else None  # first delivery starts a new file
-    changes["CHANGELOG.md"] = repo_gen.prepend_changelog(old, entry) if old else repo_gen.new_changelog(entry)
-    commit = gh.commit_files(repo["name"], base, changes, "Nexara: " + "; ".join(message_lines)[:200],
-                             executable=frozenset(p for p in changes if changes[p] is not None and repo_gen.is_executable(p)))
-    tracked = {p: repo_gen.git_blob_sha(c) for p, c in files.items() if repo_gen.is_tracked(p)}
+    if changes:
+        entry = repo_gen.changelog_entry(message_lines)
+        old = gh.blob_text(repo["name"], remote["CHANGELOG.md"]) if stored and "CHANGELOG.md" in remote else None  # first delivery starts a new file
+        changes["CHANGELOG.md"] = repo_gen.prepend_changelog(old, entry) if old else repo_gen.new_changelog(entry)
+    return {"files": files, "base": base, "remote": remote, "changes": changes, "conflicts": conflicts, "legacy": legacy,
+            "tracked": {p: repo_gen.git_blob_sha(c) for p, c in files.items() if repo_gen.is_tracked(p)}}
+
+
+def _record_main(repo: dict, plan: dict, entries: list[dict], commit: str, legacy: list[str]):
     dbm.update_repo(repo["id"], head_sha=commit, synced_at=dbm.now(), state="ready", last_error=None, layout=repo_gen.GENERATOR_VERSION)
     dbm.set_repo_legacy(repo["id"], legacy)
-    dbm.set_repo_files(repo["id"], tracked)
+    dbm.set_repo_files(repo["id"], plan["tracked"])
     for e in entries:
         dbm.upsert_repo_agent(repo["id"], e["agent_id"], e["slug"], repo_gen.spec_hash(e["spec"]))
-    return {"status": "pushed", "commit": commit, "changed": sorted(p for p in changes if p != "CHANGELOG.md"),
-            "overwritten": [c["path"] for c in conflicts]}
+
+
+def _push(gh: GitHubClient, customer: dict, repo: dict, entries: list[dict], message_lines: list[str], overwrite: bool,
+          support_email: str, via_pr: bool = False, overwrite_dev: bool = False) -> dict:
+    """First delivery commits to main (a PR needs a main to merge into). Every later change goes to `dev` and a pull request."""
+    plan = _plan(gh, customer, repo, entries, message_lines, overwrite, support_email)
+    changes, base = plan["changes"], plan["base"]
+    if not changes:
+        return {"status": "up_to_date", "commit": base, "changed": []}
+    executable = frozenset(p for p in changes if changes[p] is not None and repo_gen.is_executable(p))
+    msg = "Nexara: " + "; ".join(message_lines)[:200]
+    changed = sorted(p for p in changes if p != "CHANGELOG.md")
+    if not via_pr:
+        commit = gh.commit_files(repo["name"], base, changes, msg, executable=executable)
+        _record_main(repo, plan, entries, commit, plan["legacy"])
+        return {"status": "pushed", "commit": commit, "changed": changed, "overwritten": [c["path"] for c in plan["conflicts"]]}
+    return _propose(gh, customer, repo, entries, message_lines, plan, msg, executable, overwrite_dev)
+
+
+def _propose(gh, customer, repo, entries, message_lines, plan, msg, executable, overwrite_dev) -> dict:
+    name, changes = repo["name"], plan["changes"]
+    if gh.branch_head(name, DEV) is not None:
+        foreign = [c["message"].splitlines()[0] for c in gh.commits_ahead(name, MAIN, DEV) if not c["message"].startswith("Nexara:")]
+        if foreign and not overwrite_dev:
+            raise DevBranchBusy(foreign)
+    commit = gh.commit_files(name, plan["base"], changes, msg, executable=executable, branch=None)   # main + one Nexara commit
+    gh.set_branch(name, DEV, commit)
+    changed = sorted(p for p in changes if p != "CHANGELOG.md")
+    title = "Nexara update: " + "; ".join(message_lines)[:200]
+    body = ("This update was prepared by Nexara AI and is waiting for review. Nothing is merged automatically.\n\n"
+            + "\n".join(f"- {l}" for l in message_lines) + "\n\nFiles changed:\n" + "\n".join(f"- `{p}`" for p in changed[:60]))
+    pr = gh.find_open_pr(name, DEV, MAIN)
+    opened = pr is None
+    pr = gh.create_pr(name, DEV, MAIN, title, body) if opened else gh.update_pr(name, pr["number"], title, body)
+    agents = [{"agent_id": e["agent_id"], "slug": e["slug"], "spec_hash": repo_gen.spec_hash(e["spec"])} for e in entries]
+    cur = dbm.open_change(repo["id"])
+    fields = dict(pr_number=pr["number"], pr_url=pr["url"], title=title, summary=message_lines, commit_sha=commit, files=plan["tracked"], agents=agents)
+    if cur and cur["pr_number"] == pr["number"]:
+        ch = dbm.update_change(cur["id"], **fields)
+    else:
+        if cur:
+            dbm.update_change(cur["id"], state="closed")
+        ch = dbm.create_change(repo["id"], DEV, pr["number"], pr["url"], title, message_lines, commit, plan["tracked"], agents)
+    dbm.update_repo(repo["id"], state="ready", last_error=None)
+    dbm.add_event(customer["id"], "pr_opened" if opened else "pr_updated", {"pr": pr["number"], "url": pr["url"], "files": changed[:30]}, repo["id"])
+    return {"status": "proposed", "commit": commit, "changed": changed, "pull_request": pr, "change_id": ch["id"],
+            "overwritten": [c["path"] for c in plan["conflicts"]]}
 
 
 # ---------------------------------------------------------------- deliver
 def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: bool = False, support_email: str = "",
-            existing_repo_ack: bool = False) -> dict:
+            existing_repo_ack: bool = False, overwrite_dev: bool = False) -> dict:
     agent, request, customer = _agent_ctx(agent_id)
     if reason := unverified_reason(request):
         raise DeliveryError(reason + " Nothing was created.", 409)
@@ -269,21 +326,22 @@ def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: boo
             slug = next(e["slug"] for e in entries if e["agent_id"] == agent_id)
             first = not dbm.list_repo_agents(repo["id"])
             lines = [f"{'Initial delivery: ' if created or first else 'Added/updated agent: '}{agent['spec']['agent_name']} (/{slug})"]
-            result = _push(gh, customer, repo, entries, lines, overwrite, support_email)
-        except Conflict:
+            result = _push(gh, customer, repo, entries, lines, overwrite, support_email, via_pr=not (created or first), overwrite_dev=overwrite_dev)
+        except (Conflict, DevBranchBusy):
             raise
         except Exception as e:
             dbm.update_repo(repo["id"], state="needs_retry", last_error=str(e)[:500])
             dbm.add_event(customer["id"], "deliver_failed", str(e)[:300], repo["id"])
             raise
-        dbm.add_event(customer["id"], "agent_added", {"agent": agent["spec"]["agent_name"], "slug": slug, "commit": result["commit"]}, repo["id"])
+        dbm.add_event(customer["id"], "agent_proposed" if result["status"] == "proposed" else "agent_added",
+                      {"agent": agent["spec"]["agent_name"], "slug": slug, "commit": result["commit"]}, repo["id"])
         repo = dbm.get_repo(repo["id"])
         invite_result = None
         if invite and user:
             invite_result = _invite(gh, customer, repo, user)
         url = repo["url"]
         return {"status": result["status"], "repo": {"owner": repo["owner"], "name": repo["name"], "url": url},
-                "commit": result["commit"], "changed": result["changed"], "plugin_slug": slug, "plugin": repo_gen.company_slug(customer["slug"]),
+                "pull_request": result.get("pull_request"), "commit": result["commit"], "changed": result["changed"], "plugin_slug": slug, "plugin": repo_gen.company_slug(customer["slug"]),
                 "command": f"/{repo_gen.company_slug(customer['slug'])}:{slug}", "invite": invite_result,
                 "onboarding_draft": onboarding_draft(customer, url, repo["owner"], repo["name"], entries)}
 
@@ -316,22 +374,25 @@ def behind(entries: list[dict]) -> list[dict]:
     return [e for e in entries if e["synced_hash"] != repo_gen.spec_hash(e["spec"])]
 
 
-def sync(gh: GitHubClient, customer_id: str, overwrite: bool = False, support_email: str = "") -> dict:
+def sync(gh: GitHubClient, customer_id: str, overwrite: bool = False, support_email: str = "", overwrite_dev: bool = False) -> dict:
+    """Propose the current specs as an update: branch `dev` + pull request into `main` (nothing is merged by us)."""
     cust, repo = _customer_repo(customer_id)
     with _lock(customer_id):
         entries = _entries(repo)
         changed_agents = behind(entries)
         lines = [f"Updated agent: {e['spec']['agent_name']} (/{e['slug']})" for e in changed_agents] or ["Re-synced repository files"]
         try:
-            result = _push(gh, cust, repo, entries, lines, overwrite, support_email)
+            result = _push(gh, cust, repo, entries, lines, overwrite, support_email, via_pr=bool(dbm.list_repo_agents(repo["id"])), overwrite_dev=overwrite_dev)
+        except DevBranchBusy:
+            raise
         except Conflict as c:
             dbm.add_event(customer_id, "sync_conflict", {"paths": [x["path"] for x in c.conflicts]}, repo["id"])
             raise
         except Exception as e:
             dbm.update_repo(repo["id"], state="needs_retry", last_error=str(e)[:500])
             raise
-        if result["status"] == "pushed":
-            dbm.add_event(customer_id, "synced", {"commit": result["commit"], "files": result["changed"][:30], "overwrote": result.get("overwritten", [])}, repo["id"])
+        if result["status"] in ("pushed", "proposed"):
+            dbm.add_event(customer_id, "synced" if result["status"] == "pushed" else "sync_proposed", {"commit": result["commit"], "files": result["changed"][:30], "overwrote": result.get("overwritten", [])}, repo["id"])
         return result
 
 
@@ -347,6 +408,7 @@ def refresh(gh: GitHubClient, customer_id: str) -> dict:
         out["manual_changes"] = sorted(p for p, known in stored.items() if remote.get(p) != known)
     except GitHubError as e:
         out["errors"].append(str(e))
+    out["change"] = _check_change(gh, cust, repo, out["errors"])
     user = repo.get("invited_user")
     if user:
         try:
@@ -368,6 +430,48 @@ def refresh(gh: GitHubClient, customer_id: str) -> dict:
     except GitHubError as e:
         out["errors"].append(str(e))
     return out
+
+
+def _check_change(gh: GitHubClient, cust: dict, repo: dict, errors: list) -> dict | None:
+    """If a proposed update was merged or closed on GitHub, record it: merged -> main now holds those files and agent versions."""
+    ch = dbm.open_change(repo["id"])
+    if not ch:
+        return dbm.latest_change(repo["id"])
+    try:
+        pr = gh.get_pr(repo["name"], ch["pr_number"])
+    except GitHubError as e:
+        errors.append(str(e))
+        return ch
+    if pr["state"] == "merged":
+        head = gh.head(repo["name"])
+        dbm.set_repo_legacy(repo["id"], legacy_names(repo))          # before the agents' slugs are rewritten below
+        dbm.set_repo_files(repo["id"], ch["files"])
+        for a in ch["agents"]:
+            dbm.upsert_repo_agent(repo["id"], a["agent_id"], a["slug"], a["spec_hash"])
+        dbm.update_repo(repo["id"], head_sha=head, synced_at=dbm.now(), state="ready", last_error=None, layout=repo_gen.GENERATOR_VERSION)
+        dbm.add_event(cust["id"], "pr_merged", {"pr": ch["pr_number"], "url": ch["pr_url"]}, repo["id"])
+        return dbm.update_change(ch["id"], state="merged", merged_at=dbm.now())
+    if pr["state"] == "closed":
+        dbm.add_event(cust["id"], "pr_closed", {"pr": ch["pr_number"], "url": ch["pr_url"]}, repo["id"])
+        return dbm.update_change(ch["id"], state="closed")
+    return ch
+
+
+def diff(gh: GitHubClient, customer_id: str, support_email: str = "") -> dict:
+    """What an update would change on main right now, per file, with unified diffs (read-only; nothing is written)."""
+    cust, repo = _customer_repo(customer_id)
+    entries = _entries(repo)
+    plan = _plan(gh, cust, repo, entries, ["preview"], True, support_email)
+    out = []
+    for path, content in sorted(plan["changes"].items()):
+        if path == "CHANGELOG.md":
+            continue
+        before = gh.blob_text(repo["name"], plan["remote"][path]) if path in plan["remote"] else None
+        status = "removed" if content is None else "added" if before is None else "modified"
+        text = "".join(difflib.unified_diff((before or "").splitlines(True), (content or "").splitlines(True), f"a/{path}", f"b/{path}", n=2))
+        out.append({"path": path, "status": status, "diff": text[:20000], "truncated": len(text) > 20000})
+    return {"files": out, "conflicts": plan["conflicts"], "agents_behind": [e["spec"]["agent_name"] for e in behind(entries)],
+            "open_change": dbm.open_change(repo["id"])}
 
 
 def reinvite(gh: GitHubClient, customer_id: str) -> dict:
@@ -411,8 +515,11 @@ def customer_view(customer_id: str) -> dict:
         stale = {e["agent_id"] for e in behind(entries)}
         agents = [{"agent_id": e["agent_id"], "agent_name": e["spec"]["agent_name"], "plugin_slug": e["slug"],
                    "command": f"/{repo_gen.company_slug(cust['slug'])}:{e['slug']}", "behind": e["agent_id"] in stale} for e in entries]
+    change = dbm.latest_change(repo["id"]) if repo else None
+    if change:
+        change = {k: v for k, v in change.items() if k not in ("files", "agents")}
     return {"customer": cust, "repo": {k: v for k, v in repo.items() if k != "files"} if repo else None, "agents": agents,
-            "requests": requests, "events": dbm.list_events(customer_id)}
+            "change": change, "requests": requests, "events": dbm.list_events(customer_id)}
 
 
 def attach_request(request_id: str, customer_id: str) -> dict:

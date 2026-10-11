@@ -22,7 +22,7 @@ def env(client, monkeypatch):
         return cur["spec"], "anthropic", "m"
     monkeypatch.setattr(agent_service, "generate_spec", fake_spec)
 
-    def mk(company="Acme Corp", gh="acme-dev", email="ops@acme.example", spec=None, agent_type="Data Analyst", verified=True):
+    def mk(company="Acme Corp", gh="acme-dev", email="ops@acme.example", spec=None, agent_type="Skill", verified=True):
         cur["spec"] = spec or SPEC
         body = {**REQ, "company_name": company, "github_username": gh, "contact_email": email, "agent_type": agent_type}
         r = client.post("/api/requests", json=body).json()
@@ -35,7 +35,31 @@ def env(client, monkeypatch):
         pass
     e = E()
     e.client, e.fake, e.mk = client, fake, mk
-    e.deliver = lambda aid, **kw: client.post(f"/api/agents/{aid}/deliver", json={"confirm": True, **kw})
+    e.deliver_raw = lambda aid, **kw: client.post(f"/api/agents/{aid}/deliver", json={"confirm": True, **kw})
+
+    class Merged:
+        """The response of a proposal after a person merged its pull request: most tests are about what ends up on main."""
+        def __init__(self, r):
+            self._r, self.status_code, self.headers = r, r.status_code, r.headers
+
+        def json(self):
+            d = self._r.json()
+            return {**d, "status": "pushed"} if isinstance(d, dict) and d.get("status") == "proposed" else d
+
+    def merge_open_pr(cid):
+        repo = dbm.get_repo_for_customer(cid)
+        ch = dbm.open_change(repo["id"])
+        fake.merge_pr(repo["name"], ch["pr_number"])
+        client.post(f"/api/customers/{cid}/refresh")
+
+    def merged(r, cid):
+        if r.status_code in (200, 201) and r.json().get("status") == "proposed":
+            merge_open_pr(cid)
+        return Merged(r)
+    e.merge_open_pr = merge_open_pr
+    e.deliver = lambda aid, **kw: merged(e.deliver_raw(aid, **kw), dbm.get_agent(aid) and dbm.get_request(dbm.get_agent(aid)["request_id"])["customer_id"])
+    e.sync_raw = lambda cid, body: client.post(f"/api/customers/{cid}/sync", json=body)
+    e.sync = lambda cid, body: merged(e.sync_raw(cid, body), cid)
     return e
 
 
@@ -242,18 +266,18 @@ def test_sync_pushes_updates_with_changelog_and_marks_agent_current(env):
     env.deliver(aid)
     slug = slug_of(SPEC)
     head1 = env.fake.repos["nexara-acme-corp"]["branches"]["main"]
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True}).json()["status"] == "up_to_date"
+    assert env.sync(cid, {"confirm": True}).json()["status"] == "up_to_date"
     assert env.fake.repos["nexara-acme-corp"]["branches"]["main"] == head1               # nothing to push, no empty commit
     edit_agent(env, aid, purpose="Reviews code and flags secrets too.")
     assert env.client.get(f"/api/customers/{cid}").json()["agents"][0]["behind"] is True
-    assert env.client.post(f"/api/customers/{cid}/sync", json={}).status_code == 400
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+    assert env.sync(cid, {}).status_code == 400
+    r = env.sync(cid, {"confirm": True})
     assert r.status_code == 200 and r.json()["status"] == "pushed" and f"agents/{slug}.md" in r.json()["changed"]
     files = env.fake.files("nexara-acme-corp")
     assert "flags secrets" in files[f"agents/{slug}.md"] and "Updated agent" in files["CHANGELOG.md"]
     assert files["CHANGELOG.md"].count("## ") == 2
     assert env.client.get(f"/api/customers/{cid}").json()["agents"][0]["behind"] is False
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True}).json()["status"] == "up_to_date"
+    assert env.sync(cid, {"confirm": True}).json()["status"] == "up_to_date"
 
 
 def test_hand_edits_are_never_silently_overwritten(env):
@@ -265,12 +289,12 @@ def test_hand_edits_are_never_silently_overwritten(env):
     env.fake.push_file(name, "custom/notes.md", "my own notes")
     env.fake.push_file(name, "START-HERE.md", "edited start page")
     edit_agent(env, aid, purpose="A brand new purpose.")
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+    r = env.sync(cid, {"confirm": True})
     assert r.status_code == 409 and r.json()["code"] == "conflict"
     assert {c["path"] for c in r.json()["conflicts"]} == {agent_md, "START-HERE.md"}   # custom/ is never a conflict
     assert env.fake.files(name)[agent_md] == "customer rewrote this agent"            # nothing was pushed
     assert "sync_conflict" in {e["kind"] for e in dbm.list_events(cid)}
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True, "overwrite_conflicts": True})
+    r = env.sync(cid, {"confirm": True, "overwrite_conflicts": True})
     assert r.status_code == 200 and r.json()["status"] == "pushed"
     files = env.fake.files(name)
     assert "A brand new purpose" in files[agent_md] and files["START-HERE.md"].startswith("# Start here")
@@ -282,10 +306,10 @@ def test_deleted_managed_file_is_a_conflict_not_silently_restored(env):
     env.deliver(aid)
     env.fake.push_file("nexara-acme-corp", "scripts/doctor.sh", None)
     edit_agent(env, aid, purpose="Changed purpose.")
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+    r = env.sync(cid, {"confirm": True})
     assert r.status_code == 409 and r.json()["conflicts"] == [{"path": "scripts/doctor.sh", "why": "deleted from the repository since the last sync"}]
     assert "scripts/doctor.sh" not in env.fake.files("nexara-acme-corp")
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True, "overwrite_conflicts": True}).status_code == 200
+    assert env.sync(cid, {"confirm": True, "overwrite_conflicts": True}).status_code == 200
     assert "scripts/doctor.sh" in env.fake.files("nexara-acme-corp")
 
 
@@ -295,19 +319,20 @@ def test_changelog_edits_do_not_conflict_and_survive(env):
     name = "nexara-acme-corp"
     env.fake.push_file(name, "CHANGELOG.md", env.fake.files(name)["CHANGELOG.md"] + "\n- customer note\n")
     edit_agent(env, aid, purpose="Changed purpose.")
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True}).status_code == 200
+    assert env.sync(cid, {"confirm": True}).status_code == 200
     log = env.fake.files(name)["CHANGELOG.md"]
     assert "customer note" in log and "Updated agent" in log
 
 
 def test_sync_without_repo_is_a_clear_409(env):
     _, aid, cid = env.mk()
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+    r = env.sync(cid, {"confirm": True})
     assert r.status_code == 409 and "no repository" in r.json()["detail"]
     assert env.client.post("/api/customers/CUS-NOPE/sync", json={"confirm": True}).status_code == 404
 
 
-def test_push_race_is_reported_and_loses_nothing(env):
+def test_a_push_to_main_during_a_proposal_loses_nothing(env):
+    """A proposal is a commit on top of main that never moves main, so there is nothing to race: the late file stays, the PR is created."""
     _, aid, cid = env.mk()
     env.deliver(aid)
     edit_agent(env, aid, purpose="Changed purpose.")
@@ -318,12 +343,11 @@ def test_push_race_is_reported_and_loses_nothing(env):
         return real(name, base, *a, **k)
     GitHubClient.commit_files, orig = raced, GitHubClient.commit_files
     try:
-        r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+        r = env.sync_raw(cid, {"confirm": True})
     finally:
         GitHubClient.commit_files = orig
-    assert r.status_code == 409 and r.json()["code"] == "branch_moved"
+    assert r.status_code == 200 and r.json()["status"] == "proposed"
     assert env.fake.files("nexara-acme-corp")["custom/late.md"] == "someone pushed in between"
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True}).status_code == 200   # retry works
 
 
 # ------------------------------------------------------------------ refresh / invites / support
@@ -530,7 +554,7 @@ def test_v2_repo_is_migrated_to_the_root_plugin_layout_on_sync(env):
     aid, cid, name, old = make_v2_repo(env)
     view = env.client.get(f"/api/customers/{cid}").json()
     assert view["agents"][0]["behind"] is True and view["agents"][0]["command"] == "/acme-corp:token-spend-analyst"      # readable name shown before the sync
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+    r = env.sync(cid, {"confirm": True})
     assert r.status_code == 200 and r.json()["status"] == "pushed", r.text
     files = env.fake.files(name)
     assert "agents/token-spend-analyst.md" in files and "skills/token-spend-analyst/SKILL.md" in files and ".claude-plugin/plugin.json" in files
@@ -542,19 +566,19 @@ def test_v2_repo_is_migrated_to_the_root_plugin_layout_on_sync(env):
     repo = dbm.get_repo_for_customer(cid)
     assert repo["layout"] == 3 and repo["legacy"] == [old] and dbm.get_repo_agent(repo["id"], aid)["plugin_slug"] == "token-spend-analyst"
     assert env.client.get(f"/api/customers/{cid}").json()["agents"][0]["behind"] is False
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True}).json()["status"] == "up_to_date"          # stable afterwards
+    assert env.sync(cid, {"confirm": True}).json()["status"] == "up_to_date"          # stable afterwards
     again = json.loads(env.fake.files(name)[".claude-plugin/marketplace.json"])
     assert again["renames"] == {old: "acme-corp"}                                 # kept on later syncs
 
 
 def test_migration_never_deletes_a_hand_edited_old_file_without_confirmation(env):
     aid, cid, name, old = make_v2_repo(env, hand_edit=True)
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+    r = env.sync(cid, {"confirm": True})
     assert r.status_code == 409 and r.json()["code"] == "conflict"
     assert f"plugins/{old}/agents/{old}.md" in {c["path"] for c in r.json()["conflicts"]}
     assert env.fake.files(name)[f"plugins/{old}/agents/{old}.md"] == "customer rewrote the old agent"       # nothing was pushed or deleted
     assert dbm.get_repo_for_customer(cid)["layout"] == 2                          # migration is not marked done
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True, "overwrite_conflicts": True}).status_code == 200
+    assert env.sync(cid, {"confirm": True, "overwrite_conflicts": True}).status_code == 200
     files = env.fake.files(name)
     assert f"plugins/{old}/agents/{old}.md" not in files and "agents/token-spend-analyst.md" in files and files["custom/notes.md"] == "customer notes"
 
@@ -614,19 +638,19 @@ def test_files_in_custom_are_never_touched_even_the_starter_we_ship(env):
     env.fake.push_file(name, "custom/README.md", "the customer rewrote their own readme")
     env.fake.push_file(name, "custom/extra.md", "more customer files")
     edit_agent(env, aid, purpose="A changed purpose.")
-    r = env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True})
+    r = env.sync(cid, {"confirm": True})
     assert r.status_code == 200 and r.json()["status"] == "pushed"                          # no conflict, even though custom/README.md differs
     files = env.fake.files(name)
     assert files["custom/README.md"] == "the customer rewrote their own readme" and files["custom/extra.md"] == "more customer files"
     # and if the customer deleted the starter, the next sync puts it back exactly once (it is "created if absent")
     env.fake.push_file(name, "custom/README.md", None)
     edit_agent(env, aid, purpose="Another changed purpose.")
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True}).status_code == 200
+    assert env.sync(cid, {"confirm": True}).status_code == 200
     assert env.fake.files(name)["custom/README.md"].startswith("# custom/")
 
 
 def test_reworded_custom_starter_does_not_block_a_layout_migration(env):
     aid, cid, name, old = make_v2_repo(env)
     env.fake.push_file(name, "custom/README.md", "# custom/\n\nOld wording of the starter file shipped by an earlier release.\n")
-    assert env.client.post(f"/api/customers/{cid}/sync", json={"confirm": True}).status_code == 200
+    assert env.sync(cid, {"confirm": True}).status_code == 200
     assert env.fake.files(name)["custom/README.md"].startswith("# custom/\n\nOld wording")

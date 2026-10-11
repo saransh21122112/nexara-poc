@@ -2,12 +2,12 @@ from langchain_core.messages import AIMessage
 
 from backend import agent_service
 
-REQ = dict(company_name="Acme", industry="Retail", agent_type="Data Analyst", business_problem="We cannot analyse sales fast.",
+REQ = dict(company_name="Acme", industry="Retail", agent_type="Skill", business_problem="We cannot analyse sales fast.",
            tasks="Summarise sales and find top product", existing_tools="Excel", required_output="Short report",
            contact_email="ops@acme.example", github_username="acme-dev", claude_status="have_claude_account")
 SPEC = dict(agent_name="Sales Analyst", purpose="Analyse sales", business_problem="Slow analysis",
             instructions="You analyse sales data accurately using the tools provided.", capabilities=["analyse"],
-            input_schema={"type": "object"}, output_schema={"type": "object"}, required_tools=["calculator", "lookup_business_data"],
+            input_schema={"type": "object"}, output_schema={"type": "object"}, required_tools=["calculator"],
             data_sources=["sales"], safety_restrictions=["Never invent numbers"],
             test_scenarios=[dict(name="t1", task="Total units sold?", expected_behavior="uses tools", must_contain=["1"])],
             success_criteria=["accurate"])
@@ -187,3 +187,65 @@ def test_cloudflare_header_trusted_only_when_enabled(client, monkeypatch):
     assert [bad("6.6.6.6") for _ in range(11)][-1] == 429
     assert client.post("/api/factory/login", json={"password": "nexara-demo"}, headers={"CF-Connecting-IP": "7.7.7.7"}).status_code == 200
     main._buckets.clear()
+
+
+# ------------------------------------------------------------------ request-form assistant (public, rate limited)
+def _assist_llm(monkeypatch, reply):
+    from backend import providers, subscription
+    async def fake(system, prompt):
+        fake.seen = (system, prompt)
+        return reply
+    monkeypatch.setattr(subscription, "complete_json", fake)
+    monkeypatch.setattr(providers, "missing", lambda p: None)
+    monkeypatch.setattr(providers, "get_provider", lambda: "claude_subscription")
+    return fake
+
+
+def test_assist_fills_only_form_text_boxes(client, monkeypatch):
+    _assist_llm(monkeypatch, '```json\n{"company_name":"Acme","agent_type":"Skill","tasks":"Summarise tickets","contact_email":"evil@x.io","github_username":"evil","os":"mac","bogus":"x"}\n```')
+    r = client.post("/api/requests/assist", json={"description": "We are Acme and want a skill that summarises tickets"})
+    assert r.status_code == 200 and r.json()["fields"] == {"company_name": "Acme", "agent_type": "Skill", "tasks": "Summarise tickets"}
+
+
+def test_assist_edit_one_box_keeps_the_rest_and_sends_current_text(client, monkeypatch):
+    fake = _assist_llm(monkeypatch, '{"tasks":"Summarise tickets and post to Slack","industry":"Retail"}')
+    r = client.post("/api/requests/assist", json={"instruction": "also post to Slack", "field": "tasks", "current": {"tasks": "Summarise tickets", "industry": "SaaS"}})
+    assert r.json()["fields"] == {"tasks": "Summarise tickets and post to Slack"}      # other boxes ignored when one is targeted
+    assert "Summarise tickets" in fake.seen[1] and "also post to Slack" in fake.seen[1]
+
+
+def test_assist_rejects_bad_input_and_bad_model_output(client, monkeypatch):
+    _assist_llm(monkeypatch, "not json at all")
+    assert client.post("/api/requests/assist", json={}).status_code == 422
+    assert client.post("/api/requests/assist", json={"description": "x" * 1501}).status_code == 422
+    assert client.post("/api/requests/assist", json={"description": "hi", "field": "contact_email"}).status_code == 422
+    r = client.post("/api/requests/assist", json={"description": "hello there"})
+    assert r.status_code == 502 and "by hand" in r.json()["detail"]
+    _assist_llm(monkeypatch, '{"agent_type":"Agent"}')                                   # not one of the kinds
+    assert client.post("/api/requests/assist", json={"description": "hello there"}).status_code == 502
+
+
+def test_assist_unavailable_without_a_provider_and_is_rate_limited(client, monkeypatch):
+    r = client.post("/api/requests/assist", json={"description": "hello there"})
+    assert r.status_code == 503 and "by hand" in r.json()["detail"]
+    monkeypatch.setenv("ASSIST_PER_HOUR_PER_IP", "2")
+    codes = [client.post("/api/requests/assist", json={"description": "hello there"}).status_code for _ in range(3)]
+    assert codes[-1] == 429
+
+
+def test_assist_daily_cap(client, monkeypatch):
+    from backend import main
+    _assist_llm(monkeypatch, '{"tasks":"x y z"}')
+    monkeypatch.setenv("ASSIST_PER_DAY", "1")
+    main._assist_day[:] = [0, 0]
+    assert client.post("/api/requests/assist", json={"description": "hello there"}).status_code == 200
+    assert client.post("/api/requests/assist", json={"description": "hello again"}).status_code == 429
+
+
+def test_request_kinds_and_legacy_rows(client):
+    assert client.post("/api/requests", json={**REQ, "agent_type": "Data Analyst"}).status_code == 422   # retired kind refused on new input
+    from backend import database as dbm
+    rid = dbm.create_request({"company_name": "Old", "industry": "x", "agent_type": "Sales", "business_problem": "long enough text", "tasks": "do things",
+                              "existing_tools": "x", "required_output": "y", "contact_email": "o@old.example", "github_username": "old-dev"})
+    assert client.get(f"/api/requests/{rid['id']}").json()["agent_type"] == "Sales"                              # old stored value still shows
+    assert "MCP server" in client.get("/api/health").json()["agent_types"]

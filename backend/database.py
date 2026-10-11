@@ -73,7 +73,12 @@ CREATE TABLE IF NOT EXISTS repo_agents (id TEXT PRIMARY KEY, repo_id TEXT REFERE
 CREATE TABLE IF NOT EXISTS email_verifications (id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id), email TEXT,
   token_hash TEXT UNIQUE, created_at TEXT, expires_at TEXT, used_at TEXT);
 CREATE TABLE IF NOT EXISTS repo_events (id TEXT PRIMARY KEY, customer_id TEXT REFERENCES customers(id), repo_id TEXT,
-  at TEXT, kind TEXT, detail TEXT)
+  at TEXT, kind TEXT, detail TEXT);
+CREATE TABLE IF NOT EXISTS repo_changes (id TEXT PRIMARY KEY, repo_id TEXT REFERENCES repos(id), branch TEXT, pr_number INTEGER,
+  pr_url TEXT, state TEXT, title TEXT, summary TEXT, commit_sha TEXT, files TEXT, agents TEXT, created_at TEXT, updated_at TEXT, merged_at TEXT);
+CREATE TABLE IF NOT EXISTS contact_messages (id TEXT PRIMARY KEY, created_at TEXT, name TEXT, email TEXT, topic TEXT, message TEXT, read INTEGER);
+CREATE TABLE IF NOT EXISTS build_events (id TEXT PRIMARY KEY, request_id TEXT REFERENCES requests(id), seq INTEGER, at TEXT,
+  stage TEXT, state TEXT, title TEXT, detail TEXT)
 """
 
 
@@ -471,3 +476,125 @@ def stats() -> dict:
                 "agents_tested": tested, "customers": one("SELECT COUNT(*) FROM customers"),
                 "agents_delivered": one("SELECT COUNT(DISTINCT agent_id) FROM repo_agents"),
                 "recent_activity": sorted(activity, key=lambda a: a["at"], reverse=True)[:12]}
+
+
+# ------------------------------------------------------------------ build events (the live pipeline view)
+BUILD_STAGES = ["received", "analyse", "specify", "test", "package", "ready"]
+BUILD_TERMINAL = {"failed", "interrupted"}      # a build also ends when "ready" is done
+
+
+def add_build_event(request_id: str, stage: str, state: str, title: str, detail: dict | None = None) -> dict:
+    with db() as c:
+        seq = (c.execute("SELECT MAX(seq) FROM build_events WHERE request_id=?", (request_id,)).fetchone()[0] or 0) + 1
+        eid = new_id("BEV")
+        c.execute("INSERT INTO build_events VALUES (?,?,?,?,?,?,?,?)", (eid, request_id, seq, now(), stage, state, title, json.dumps(detail)))
+    return {"id": eid, "seq": seq}
+
+
+def list_build_events(request_id: str) -> list[dict]:
+    with db() as c:
+        rows = c.execute("SELECT * FROM build_events WHERE request_id=? ORDER BY seq", (request_id,)).fetchall()
+    return [_j(r, "detail") for r in rows]
+
+
+def build_status(request_id: str) -> dict:
+    """Derived from the events of the LATEST build (everything since the last 'received running'). status: none|running|failed|interrupted|ready."""
+    evs = list_build_events(request_id)
+    starts = [i for i, e in enumerate(evs) if e["stage"] == "received" and e["state"] == "running"]
+    evs = evs[starts[-1]:] if starts else []
+    stages: dict = {}
+    for e in evs:
+        cur = stages.setdefault(e["stage"], {"state": "pending", "title": "", "detail": None, "at": e["at"], "progress": []})
+        if e["state"] == "progress":
+            cur["progress"].append({"title": e["title"], "detail": e["detail"], "at": e["at"]})
+        else:
+            cur.update(state=e["state"], title=e["title"], detail=e["detail"] if e["detail"] is not None else cur["detail"], done_at=e["at"])
+    last = evs[-1] if evs else None
+    if not last:
+        status = "none"
+    elif last["state"] in BUILD_TERMINAL:
+        status = last["state"]
+    elif last["stage"] == "ready" and last["state"] == "done":
+        status = "ready"
+    else:
+        status = "running"
+    return {"status": status, "stages": stages, "events": evs, "started_at": evs[0]["at"] if evs else None}
+
+
+def interrupt_stale_builds() -> int:
+    """A redeploy kills a running build task; mark such builds interrupted so no screen spins forever."""
+    with db() as c:
+        ids = [r[0] for r in c.execute("SELECT DISTINCT request_id FROM build_events").fetchall()]
+    n = 0
+    for rid in ids:
+        if build_status(rid)["status"] == "running":
+            last = list_build_events(rid)[-1]
+            add_build_event(rid, last["stage"], "interrupted", "The server restarted during this step. Start the build again.")
+            n += 1
+    return n
+
+
+# ------------------------------------------------------------------ proposed changes (dev branch + pull request in a customer repo)
+def create_change(repo_id: str, branch: str, pr_number: int, pr_url: str, title: str, summary: list, commit_sha: str,
+                  files: dict, agents: list) -> dict:
+    """files = tracked path -> blob sha as it will be on main once merged; agents = [{agent_id, slug, spec_hash}]."""
+    cid = new_id("CHG")
+    with db() as c:
+        c.execute("INSERT INTO repo_changes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                  (cid, repo_id, branch, pr_number, pr_url, "open", title, json.dumps(summary), commit_sha, json.dumps(files),
+                   json.dumps(agents), now(), now(), None))
+    return get_change(cid)
+
+
+def get_change(cid: str):
+    with db() as c:
+        return _j(c.execute("SELECT * FROM repo_changes WHERE id=?", (cid,)).fetchone(), "summary", "files", "agents")
+
+
+def latest_change(repo_id: str):
+    with db() as c:
+        return _j(c.execute("SELECT * FROM repo_changes WHERE repo_id=? ORDER BY created_at DESC LIMIT 1", (repo_id,)).fetchone(),
+                  "summary", "files", "agents")
+
+
+def open_change(repo_id: str):
+    with db() as c:
+        return _j(c.execute("SELECT * FROM repo_changes WHERE repo_id=? AND state='open' ORDER BY created_at DESC LIMIT 1", (repo_id,)).fetchone(),
+                  "summary", "files", "agents")
+
+
+def update_change(cid: str, **fields) -> dict:
+    bad = set(fields) - {"state", "title", "summary", "commit_sha", "files", "agents", "pr_number", "pr_url", "merged_at"}
+    if bad:
+        raise ValueError(f"unknown change fields: {bad}")
+    vals = [json.dumps(v) if k in ("summary", "files", "agents") else v for k, v in fields.items()]
+    with db() as c:
+        c.execute(f"UPDATE repo_changes SET {', '.join(k + '=?' for k in fields)}, updated_at=? WHERE id=?", (*vals, now(), cid))
+    return get_change(cid)
+
+
+# ------------------------------------------------------------------ contact messages (public form, read in the factory)
+def add_message(name: str, email: str, topic: str, message: str) -> dict:
+    mid = new_id("MSG")
+    with db() as c:
+        c.execute("INSERT INTO contact_messages VALUES (?,?,?,?,?,?,?)", (mid, now(), name, email, topic, message, 0))
+    return {"id": mid}
+
+
+def list_messages(limit: int = 200) -> list[dict]:
+    with db() as c:
+        rows = c.execute("SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    return [{**dict(r), "read": bool(r["read"])} for r in rows]
+
+
+def count_messages_since(iso: str) -> int:
+    with db() as c:
+        return c.execute("SELECT COUNT(*) FROM contact_messages WHERE created_at>=?", (iso,)).fetchone()[0]
+
+
+def mark_message_read(mid: str) -> bool:
+    with db() as c:
+        if not c.execute("SELECT 1 FROM contact_messages WHERE id=?", (mid,)).fetchone():
+            return False
+        c.execute("UPDATE contact_messages SET read=1 WHERE id=?", (mid,))
+    return True

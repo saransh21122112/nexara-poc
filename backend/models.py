@@ -2,8 +2,8 @@ import re
 from typing import Any, Literal
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-AGENT_TYPES = ["Customer Support", "Sales", "Data Analyst", "Research", "Workflow Automation", "Custom"]
-AgentType = Literal["Customer Support", "Sales", "Data Analyst", "Research", "Workflow Automation", "Custom"]
+AGENT_TYPES = ["Plugin", "Skill", "MCP server", "Tool", "Custom"]   # what the customer wants built; the DB column keeps its old name `agent_type`
+AgentType = Literal["Plugin", "Skill", "MCP server", "Tool", "Custom"]
 
 
 # GitHub usernames: 1-39 chars, letters/digits/single hyphens, cannot start or end with a hyphen
@@ -20,6 +20,7 @@ class RequestIn(BaseModel):
     tasks: str = Field(min_length=5, max_length=4000)
     existing_tools: str = Field(min_length=1, max_length=2000)
     required_output: str = Field(min_length=3, max_length=2000)
+    examples: str | None = Field(default=None, max_length=4000)      # optional: a few real examples from the customer (confidential parts removed)
     contact_email: EmailStr
     github_username: str
     claude_status: ClaudeStatus
@@ -39,6 +40,63 @@ class RequestIn(BaseModel):
         return v
 
 
+ASSIST_FIELDS = ("company_name", "industry", "agent_type", "business_problem", "tasks", "existing_tools", "required_output", "examples")
+
+
+class AssistIn(BaseModel):
+    """Free-text request to the form assistant: fill everything from `description`, or change boxes per `instruction`."""
+    description: str = Field(default="", max_length=1500)
+    instruction: str = Field(default="", max_length=500)
+    field: str | None = None                                  # limit an edit to one box
+    current: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("field")
+    @classmethod
+    def _field(cls, v):
+        if v is not None and v not in ASSIST_FIELDS:
+            raise ValueError("unknown field")
+        return v
+
+    @field_validator("current")
+    @classmethod
+    def _current(cls, v):
+        return {k: str(x)[:4000] for k, x in v.items() if k in ASSIST_FIELDS}   # drop anything that is not a form box
+
+
+class AssistOut(BaseModel):
+    """What the assistant may return: text boxes only (never contact, GitHub or OS)."""
+    company_name: str | None = Field(default=None, max_length=120)
+    industry: str | None = Field(default=None, max_length=120)
+    agent_type: AgentType | None = None
+    business_problem: str | None = Field(default=None, max_length=4000)
+    tasks: str | None = Field(default=None, max_length=4000)
+    existing_tools: str | None = Field(default=None, max_length=2000)
+    required_output: str | None = Field(default=None, max_length=2000)
+    examples: str | None = Field(default=None, max_length=4000)
+
+
+CONTACT_TOPICS = ["General", "New request", "Existing project", "Partnership", "Press", "Other"]
+
+
+class ContactIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    topic: Literal["General", "New request", "Existing project", "Partnership", "Press", "Other"] = "General"
+    message: str = Field(min_length=10, max_length=4000)
+    ticket: str = Field(max_length=200)
+    website: str = Field(default="", max_length=500)       # honeypot: real people never see or fill it
+
+    @field_validator("name", "message", "topic", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class GenerateTestsIn(BaseModel):
+    count: int = Field(default=3, ge=1, le=5)
+    focus: str = Field(default="", max_length=300)
+
+
 class TestScenario(BaseModel):
     name: str
     task: str
@@ -55,7 +113,7 @@ class AgentSpec(BaseModel):
     capabilities: list[str] = Field(min_length=1)
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
-    required_tools: list[str] = Field(description="Subset of: calculator, lookup_business_data. Empty if none needed.")
+    required_tools: list[str] = Field(description="Subset of: calculator. Empty if none needed (the agent works on the customer's own files and systems).")
     data_sources: list[str]
     safety_restrictions: list[str] = Field(min_length=1)
     test_scenarios: list[TestScenario] = Field(min_length=1)
@@ -82,6 +140,7 @@ class DeliverIn(BaseModel):
     confirm: bool = False
     invite: bool = True
     existing_repo_ack: bool = False   # required when the agent is added to a repo that already exists
+    overwrite_dev: bool = False
 
 
 class AttachIn(BaseModel):
@@ -92,6 +151,11 @@ class AttachIn(BaseModel):
 class SyncIn(BaseModel):
     confirm: bool = False
     overwrite_conflicts: bool = False
+    overwrite_dev: bool = False       # replace commits on the repo's dev branch that Nexara did not make
+
+
+class ReviseIn(BaseModel):
+    instruction: str = Field(min_length=3, max_length=1500)
 
 
 class NoteIn(BaseModel):
