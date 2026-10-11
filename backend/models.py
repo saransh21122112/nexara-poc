@@ -20,6 +20,7 @@ class RequestIn(BaseModel):
     tasks: str = Field(min_length=5, max_length=4000)
     existing_tools: str = Field(min_length=1, max_length=2000)
     required_output: str = Field(min_length=3, max_length=2000)
+    examples: str | None = Field(default=None, max_length=4000)      # optional: a few real examples from the customer (confidential parts removed)
     contact_email: EmailStr
     github_username: str
     claude_status: ClaudeStatus
@@ -39,7 +40,7 @@ class RequestIn(BaseModel):
         return v
 
 
-ASSIST_FIELDS = ("company_name", "industry", "agent_type", "business_problem", "tasks", "existing_tools", "required_output")
+ASSIST_FIELDS = ("company_name", "industry", "agent_type", "business_problem", "tasks", "existing_tools", "required_output", "examples")
 
 
 class AssistIn(BaseModel):
@@ -71,6 +72,29 @@ class AssistOut(BaseModel):
     tasks: str | None = Field(default=None, max_length=4000)
     existing_tools: str | None = Field(default=None, max_length=2000)
     required_output: str | None = Field(default=None, max_length=2000)
+    examples: str | None = Field(default=None, max_length=4000)
+
+
+CONTACT_TOPICS = ["General", "New request", "Existing project", "Partnership", "Press", "Other"]
+
+
+class ContactIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: EmailStr
+    topic: Literal["General", "New request", "Existing project", "Partnership", "Press", "Other"] = "General"
+    message: str = Field(min_length=10, max_length=4000)
+    ticket: str = Field(max_length=200)
+    website: str = Field(default="", max_length=500)       # honeypot: real people never see or fill it
+
+    @field_validator("name", "message", "topic", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class GenerateTestsIn(BaseModel):
+    count: int = Field(default=3, ge=1, le=5)
+    focus: str = Field(default="", max_length=300)
 
 
 class TestScenario(BaseModel):
@@ -89,7 +113,7 @@ class AgentSpec(BaseModel):
     capabilities: list[str] = Field(min_length=1)
     input_schema: dict[str, Any]
     output_schema: dict[str, Any]
-    required_tools: list[str] = Field(description="Subset of: calculator, lookup_business_data. Empty if none needed.")
+    required_tools: list[str] = Field(description="Subset of: calculator. Empty if none needed (the agent works on the customer's own files and systems).")
     data_sources: list[str]
     safety_restrictions: list[str] = Field(min_length=1)
     test_scenarios: list[TestScenario] = Field(min_length=1)

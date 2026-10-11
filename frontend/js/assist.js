@@ -1,7 +1,7 @@
 // Request-form assistant: "describe it" fills the boxes; "Ask AI" edits one box. Nothing is submitted by it, and every change can be undone.
 (()=>{
 const form=document.getElementById("f"),note=document.getElementById("anote"),desc=document.getElementById("desc"),fill=document.getElementById("fill");
-const BOXES=["company_name","industry","agent_type","business_problem","tasks","existing_tools","required_output"];
+const BOXES=["company_name","industry","agent_type","business_problem","tasks","existing_tools","required_output","examples"];
 const CHIPS=["Make it shorter","Add more detail","Mention Slack and Jira"];
 const prev={};
 const say=(t,k="")=>{note.textContent=t;note.className="note "+k};

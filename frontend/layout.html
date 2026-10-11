@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en" class="pub">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>{{TITLE}}</title>
+<meta name="description" content="{{DESC}}">
+<meta name="robots" content="{{ROBOTS}}">
+<meta name="theme-color" content="#f6f0e4">
+<link rel="canonical" href="{{CANON}}">
+<meta property="og:type" content="website"><meta property="og:site_name" content="Nexara AI"><meta property="og:title" content="{{TITLE}}"><meta property="og:description" content="{{DESC}}"><meta property="og:url" content="{{CANON}}">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%236b1d2a%27/%3E%3Ctext x=%2716%27 y=%2723%27 font-size=%2720%27 text-anchor=%27middle%27 fill=%27%23c9a227%27 font-family=%27sans-serif%27 font-weight=%27700%27%3EN%3C/text%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/Inter-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/SpaceGrotesk-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/css/fonts.css">
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/site.css">
+<script src="/js/site.js"></script>
+</head>
+<body class="pub">
+{{SPRITE}}
+<a class="skip" href="#main">Skip to content</a>
+<div class="progress" aria-hidden="true"><i></i></div>
+<header class="top" id="top">
+  <div class="wrap nav">
+    <a class="logo" href="/" aria-label="Nexara AI home"><span class="mk"><svg class="i" aria-hidden="true"><use href="#i-plugin"/></svg></span><span>Nexara<b>.AI</b></span></a>
+    <nav class="links" aria-label="Main">{{NAV}}<a class="btn sm" href="/request">Start a request</a></nav>
+    <button class="menu-btn" id="menu" type="button" aria-expanded="false" aria-controls="sheet" aria-label="Open menu"><span class="bars"><i></i><i></i><i></i></span></button>
+  </div>
+</header>
+<div class="sheet" id="sheet" aria-hidden="true">{{SHEET}}<a class="btn" href="/request">Start a request</a></div>
+<main id="main" tabindex="-1">
+{{BODY}}
+</main>
+<footer class="foot">
+  <div class="wrap">
+    <div class="fcols">
+      <div class="fbrand"><a class="logo" href="/"><span class="mk"><svg class="i" aria-hidden="true"><use href="#i-plugin"/></svg></span><span>Nexara<b>.AI</b></span></a><p>Custom plugins, skills, MCP servers and tools, built around how your business really works.</p></div>
+      <div><p class="fh4">What we do</p><a href="/what-we-do">Services</a><a href="/how-we-work">How we work</a><a href="/security">Security</a><a href="/faq">FAQ</a></div>
+      <div><p class="fh4">Company</p><a href="/about">About</a><a href="/contact">Contact</a><a href="/request">Start a request</a><a href="/track">Track a request</a></div>
+      <div><p class="fh4">Legal</p><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
+    </div>
+    <div class="fine"><span>&copy; {{YEAR}} {{ENTITY}}</span>{{FOOT_EXTRA}}</div>
+  </div>
+</footer>
+<script src="/js/icons.js"></script>
+{{SCRIPTS}}
+</body>
+</html>

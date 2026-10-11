@@ -11,7 +11,7 @@ $("#signout").onclick=logout;
 document.querySelectorAll("button.nav").forEach(b=>b.onclick=()=>go(b.dataset.v));
 function go(v){VIEW=v;document.querySelectorAll("button.nav").forEach(b=>b.classList.toggle("on",b.dataset.v===v));render()}
 async function loadGh(){try{const g=await api("/github/status"),m=await api("/mail/status");$("#ghnote").textContent=(g.ok?`GitHub: ${g.owner} ✓`:(g.configured?"GitHub: token problem":"GitHub: not configured"))+" · "+(m.verification_required?(m.configured?`Mail: ${m.mode} ✓`:"Mail: not configured"):"Email verification OFF");$("#ghnote").title=[g.issue,m.verification_required?m.issue:"REQUIRE_EMAIL_VERIFICATION=false: requests are not email-verified"].filter(Boolean).join(" | ")}catch{}}
-async function start(){$("#login").hidden=true;$("#app").hidden=false;await loadProv();loadGh();render()}
+async function start(){$("#login").hidden=true;$("#app").hidden=false;await loadProv();loadGh();refreshUnread();render()}
 async function loadProv(){PROV=await api("/provider");const L={anthropic:"Anthropic API",openai:"OpenAI API",claude_subscription:"Claude subscription (local demo only)"};
  $("#prov").innerHTML=Object.entries(PROV.providers).map(([k,v])=>`<option value="${k}" ${k===PROV.current?"selected":""}>${L[k]}${v.configured?"":" - not configured"}</option>`).join("");
  const c=PROV.providers[PROV.current];$("#provnote").textContent=c.configured?c.model:"";$("#provnote").title=c.issue||""}
@@ -20,7 +20,7 @@ function cfgBanner(){const c=PROV.providers[PROV.current];return c.configured?""
 const fmt=t=>t?new Date(t).toLocaleString():"";
 function countUp(root){root.querySelectorAll(".tile .n").forEach(el=>{const to=+el.textContent;if(!isFinite(to)||matchMedia("(prefers-reduced-motion:reduce)").matches)return;let t0;const f=t=>{t0??=t;const p=Math.min((t-t0)/700,1);el.textContent=Math.round(to*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(f)};requestAnimationFrame(f)})}
 async function render(){const v=$("#view");v.innerHTML='<div class="sk big"></div><div class="sk"></div><div class="sk" style="width:70%"></div>';
- try{await ({overview,requests,customers,live,builder,playground}[VIEW])(v);countUp(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
+ try{await ({overview,requests,customers,live,builder,playground,messages}[VIEW])(v);countUp(v);cardify(v);a11y(v)}catch(e){v.innerHTML=`<div class="bad">${esc(e.message)}</div>`}}
 
 async function overview(v){const s=await api("/stats");
  v.innerHTML=`<h2>Overview</h2><p class="muted">Live counts from the database.</p><div class="tiles">
@@ -67,7 +67,7 @@ function showSpec(a){const el=$("#spec");if(!a){el.innerHTML="";return}const s=a
  <label>Business problem</label><textarea id="f_business_problem">${esc(s.business_problem)}</textarea>
  <label>Instructions (system prompt)</label><textarea id="f_instructions" style="min-height:160px">${esc(s.instructions)}</textarea>
  <label>Capabilities (one per line)</label><textarea id="f_capabilities">${esc(L(s.capabilities))}</textarea>
- <label>Required tools (one per line: calculator, lookup_business_data)</label><textarea id="f_required_tools" style="min-height:50px">${esc(L(s.required_tools))}</textarea>
+ <label>Required tools (one per line; only: calculator)</label><textarea id="f_required_tools" style="min-height:50px">${esc(L(s.required_tools))}</textarea>
  <label>Data sources (one per line)</label><textarea id="f_data_sources" style="min-height:50px">${esc(L(s.data_sources))}</textarea>
  <label>Safety restrictions (one per line)</label><textarea id="f_safety_restrictions">${esc(L(s.safety_restrictions))}</textarea>
  <label>Success criteria (one per line)</label><textarea id="f_success_criteria">${esc(L(s.success_criteria))}</textarea>
@@ -135,7 +135,8 @@ async function customerDetail(id,live){const d=await api(`/customers/${id}`);con
   <div class="panel" id="issues"><h3>Open issues</h3>${live?(live.issues.length?`<table>${live.issues.map(i=>`<tr><td><a href="${esc(i.url)}" target="_blank" rel="noopener">#${i.number} ${esc(i.title)}</a></td><td class="muted">${esc(i.user)}</td></tr>`).join("")}</table>`:'<p class="muted">No open issues.</p>'):'<p class="muted">Press "Refresh from GitHub" to load them.</p>'}${live&&live.manual_changes.length?`<div class="warn">Files changed by hand in the repo: <code>${live.manual_changes.map(esc).join(", ")}</code>. The next sync will ask before overwriting them.</div>`:""}${live&&live.errors.length?`<div class="bad">${live.errors.map(esc).join("<br>")}</div>`:""}</div>`:""}
   <div class="panel"><h3>Requests</h3>${d.requests.map(q=>`<div>${esc(q.id)} · ${esc(q.agent_type)} · ${fmt(q.created_at)} · ${q.agent_count} agent(s) · ${q.email_verified?'<span class="tag ok">email verified</span>':'<span class="tag fail">email not verified</span>'}</div>`).join("")}<p class="muted">A new request from this company becomes another agent in the same repo.</p></div>
   <div class="panel"><h3>Timeline and notes</h3><div class="row"><input id="nt" placeholder="Add a support note..." maxlength="2000"><button class="btn sec" id="na" style="white-space:nowrap">Add note</button></div>
-  <table style="margin-top:8px">${d.events.map(e=>`<tr><td class="muted" style="white-space:nowrap">${fmt(e.at)}</td><td><span class="tag ${/failed|conflict|expired/.test(e.kind)?"fail":e.kind==="note"?"":"ok"}">${esc(e.kind.replace(/_/g," "))}</span></td><td>${esc(typeof e.detail==="string"?e.detail:e.detail?Object.entries(e.detail).map(([k,v])=>k+": "+(Array.isArray(v)?v.join(", "):v)).join(" · "):"")}</td></tr>`).join("")||'<tr><td class="muted">No events yet.</td></tr>'}</table></div>`;
+  <div style="margin-top:10px">${eventsTable(d.events)}</div></div>`;
+ cardify(el);a11y(el);
  const msg=t=>$("#cmsg")&&($("#cmsg").textContent=t);const redo=l=>customerDetail(id,l);
  el.querySelectorAll("[data-ob]").forEach(b=>b.onchange=async()=>{try{await api(`/customers/${id}/onboarding`,{method:"POST",body:JSON.stringify({step:b.dataset.ob,value:b.checked})})}catch(e){msg(e.message)}});
  {const it=document.querySelector(".item.on .tag");if(it&&r)it.outerHTML=invTag(inv)} // keep the list badge in step with the detail
@@ -147,27 +148,6 @@ async function customerDetail(id,live){const d=await api(`/customers/${id}`);con
  $("#ac").onclick=()=>{$("#cact").innerHTML=`<div class="row" style="margin-top:12px"><input id="au" placeholder="GitHub username" style="max-width:240px"><button class="btn sec" id="au_go">Review invite</button></div>`;
   $("#au_go").onclick=()=>{const u=$("#au").value.trim().replace(/^@/,"");if(!u)return;confirmBar($("#cact"),`GitHub will email an invitation to @${u}. They get WRITE access to this customer's private repo.`,"Invite",async()=>{try{await api(`/customers/${id}/collaborators`,{method:"POST",body:JSON.stringify({username:u,confirm:true})});redo(live)}catch(e){msg(e.message)}})}};
  wireChanges(el,d,id,r,msg,redo,live)}
-
-const EXAMPLES={"Customer Support":"Draft a response to a customer whose order ORD-1001 has been delayed.","Data Analyst":"Analyze the sales figures and identify the best-performing product by revenue."};
-async function playground(v){const agents=await api("/agents");if(!SEL.agent||!agents.find(a=>a.id===SEL.agent))SEL.agent=agents[0]?.id||null;
- if(!agents.length){v.innerHTML='<h2>Playground</h2><div class="empty">No agents yet. Generate one in the Agent Builder.</div>';return}
- v.innerHTML=`<h2>Playground</h2><p class="muted">Run real tasks through a saved agent. Tools: calculator, lookup_business_data (sales, customers, orders).</p>${cfgBanner()}
- <div class="panel"><label style="margin-top:0">Agent</label><select id="ag">${agents.map(a=>`<option value="${a.id}" ${a.id===SEL.agent?"selected":""}>${a.id} - ${esc(a.spec.agent_name)}</option>`).join("")}</select>
- <label>Task</label><textarea id="task" placeholder="Enter a test task..."></textarea><div class="chips" id="chips"></div>
- <div class="row"><button class="btn" id="run">Run task</button><button class="btn sec" id="test">Run Test (scenarios)</button><span id="st" class="muted"></span></div></div><div id="out"></div><div id="hist"></div>`;
- const cur=()=>agents.find(a=>a.id===SEL.agent);
- const chips=()=>{const a=cur();$("#chips").innerHTML=[...Object.values(EXAMPLES),...a.spec.test_scenarios.map(t=>t.task)].slice(0,5).map(t=>`<button class="chip">${esc(t.slice(0,70))}</button>`).join("");
-  $("#chips").querySelectorAll(".chip").forEach((c,i)=>c.onclick=()=>$("#task").value=[...Object.values(EXAMPLES),...a.spec.test_scenarios.map(t=>t.task)][i])};
- chips();$("#ag").onchange=e=>{SEL.agent=e.target.value;chips();hist()};
- const hist=async()=>{const rs=await api("/runs?agent_id="+SEL.agent);$("#hist").innerHTML=rs.length?`<div class="panel"><h3>Execution history</h3>${rs.slice(0,8).map(logHtml).join("")}</div>`:""};
- $("#run").onclick=async()=>{const t=$("#task").value.trim();if(!t)return;busy(true,"Running...");$("#out").innerHTML="";
-  try{const r=await api(`/agents/${SEL.agent}/run`,{method:"POST",body:JSON.stringify({task:t})});$("#out").innerHTML=`<div class="panel"><h3>Execution log</h3>${logHtml(r,true)}</div>`;hist()}
-  catch(e){$("#out").innerHTML=`<div class="bad">${e.status===503?"<b>Configuration needed.</b> ":""}${esc(e.message)}</div>`}busy(false)};
- $("#test").onclick=async()=>{busy(true,"Running scenarios (up to 3 model runs)...");$("#out").innerHTML="";
-  try{const r=await api(`/agents/${SEL.agent}/evaluate`,{method:"POST"});
-   $("#out").innerHTML=`<div class="panel"><h3>Test results · pass rate ${Math.round(r.pass_rate*100)}%</h3><p class="muted">${esc(r.note)}</p><table><tr><th>Test</th><th>Expected</th><th>Actual</th><th>Result</th></tr>${r.results.map(x=>`<tr><td>${esc(x.name)}<br><small class="muted">${esc(x.task)}</small></td><td>${esc(x.expected_behavior)}</td><td><pre>${esc(x.actual.slice(0,500))}</pre>${x.tool_calls.map(c=>`<span class="tag">${esc(c.tool)}</span>`).join("")}</td><td><span class="tag ${x.passed?"ok":"fail"}">${x.passed?"PASS":"FAIL"}</span><br><small class="muted">${esc(x.reason)}</small></td></tr>`).join("")}</table></div>`;hist()}
-  catch(e){$("#out").innerHTML=`<div class="bad">${e.status===503?"<b>Configuration needed.</b> ":""}${esc(e.message)}</div>`}busy(false)};
- const busy=(b,m="")=>{["#run","#test"].forEach(s=>$(s).disabled=b);$("#st").textContent=m};hist()}
 
 function logHtml(r,open){return `<details ${open?"open":""} style="margin:8px 0"><summary><span class="tag ${r.status==="success"?"ok":"fail"}">${r.status}</span><span class="tag">${r.kind}</span>${esc(r.task.slice(0,80))} <small class="muted">· ${r.latency_ms} ms · ${fmt(r.created_at)}</small></summary>
  <dl style="margin-top:8px"><dt>Agent</dt><dd>${r.agent_id}</dd><dt>Input task</dt><dd>${esc(r.task)}</dd><dt>Provider / model</dt><dd>${esc(r.provider)} / ${esc(r.model)}</dd><dt>Status</dt><dd>${r.status}</dd>

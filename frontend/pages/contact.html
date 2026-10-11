@@ -1,0 +1,18 @@
+<div class="wrap">
+<div class="phead"><span class="eyebrow">Contact</span><h1>Talk to us.</h1><p class="lead">A question, an idea, or something not working? Send a message and a person will read it.</p></div>
+<div class="contact">
+  <form id="cf" class="box" novalidate>
+    <header><svg class="i" aria-hidden="true"><use href="#i-inbox"/></svg>Send a message</header>
+    <div class="in2">
+      <div class="two"><div><label for="c_name">Your name</label><input id="c_name" name="name" required maxlength="120" autocomplete="name"><div class="err" data-for="name"></div></div>
+      <div><label for="c_email">Email</label><input id="c_email" name="email" type="email" required maxlength="200" autocomplete="email" inputmode="email"><div class="err" data-for="email"></div></div></div>
+      <label for="c_topic">Topic</label><select id="c_topic" name="topic"><option>General</option><option>New request</option><option>Existing project</option><option>Partnership</option><option>Press</option><option>Other</option></select>
+      <label for="c_msg">Message</label><textarea id="c_msg" name="message" required minlength="10" maxlength="4000" placeholder="How can we help?"></textarea><div class="err" data-for="message"></div>
+      <div class="hp" aria-hidden="true"><label for="c_site">Leave this empty</label><input id="c_site" name="website" tabindex="-1" autocomplete="off"></div>
+      <div id="cmsg" class="banner bad" role="alert" hidden></div>
+      <p style="margin-top:20px"><button class="btn" id="csend" type="submit">Send message <svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg></button></p>
+      <p class="hint">By sending this you agree to our <a href="/privacy">privacy notice</a>.</p>
+    </div>
+  </form>
+  <aside class="side"><h2>Other ways</h2>{{CONTACT_SIDE}}<p>Starting a project? The <a href="/request">request form</a> is the fastest way, and our assistant helps you fill it in.</p><p>Already submitted one? <a href="/track">Track it here</a>.</p></aside>
+</div></div>

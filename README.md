@@ -1,7 +1,9 @@
-# Nexara AI - Agent Factory (POC)
+# Nexara AI - plugin, skill, MCP server and tool factory (POC)
 
-A public site where companies request AI agents, and a private `/factory` dashboard where an engineer turns a request into
-an agent with an LLM, tests it, and **delivers it as a private GitHub repository** that the customer's Claude Code loads
+> Contributing? Read [`CLAUDE.md`](CLAUDE.md) and [`docs/`](docs/README.md) first. Changes follow spec-driven development and arrive as a PR to `dev`.
+
+A public site where companies request plugins, skills, MCP servers and tools, and a private `/factory` dashboard where an engineer turns a request into
+a specification with an LLM, tests it, and **delivers it as a private GitHub repository** that the customer's Claude Code loads
 directly (skills, a read-only subagent, a slash command). Nexara keeps pushing improvements to the same repo and the
 customer's Claude Code picks them up automatically.
 
@@ -61,7 +63,7 @@ SQLite by default (`data/nexara.db`); set `DATABASE_URL=postgresql://...` for Po
 `AI_PROVIDER` or the header dropdown: `anthropic` (API key), `openai` (API key), `claude_subscription` (your Claude plan via `claude-agent-sdk`; **local demo only**, Anthropic's terms restrict using consumer-subscription logins to serve others; built-in tools and account connectors are disabled). An unconfigured provider returns a clear 503; there is no silent fallback.
 
 ## Tools in the Playground
-`calculator` (AST-whitelisted arithmetic) and `lookup_business_data` (sample data), validated server-side. The agent loop is a LangGraph graph. These tools exist for testing agents in the factory; delivered agents are read-only Claude Code plugins.
+`calculator` (AST-whitelisted arithmetic), validated server-side. There is no sample dataset: specs and tests use the customer's own examples or inline synthetic inputs. The agent loop is a LangGraph graph. These tools exist for testing agents in the factory; delivered agents are read-only Claude Code plugins.
 
 ## API (all except health, login and `POST /api/requests` need the factory token)
 `GET /api/health` `POST /api/factory/login` `GET|PUT /api/provider` `POST|GET /api/requests` `POST /api/requests/{id}/generate-agent` `GET|PUT /api/agents/{id}` `POST /api/agents/{id}/run|evaluate` `GET /api/runs` `GET /api/stats`
@@ -91,3 +93,6 @@ Customers can follow progress at `/track?id=REQ-...`. That page gets step names 
 
 ## Changing delivered work (dev branch + pull request)
 After the first delivery, nothing is committed to a customer's `main` any more. Open the customer in `/factory`, press **Change** on an agent, describe the change in plain words, review the proposed spec diff and save it, then **Review files** and **Open pull request**. Nexara builds one commit on top of the repo's current `main`, puts it on the branch `dev` and opens (or updates) a pull request `dev` -> `main`; a person merges on GitHub and presses **Refresh from GitHub**, which records the merge. If `dev` holds commits Nexara did not make, the push is refused until you choose to replace them. Hand edits on `main` still block a proposal until you confirm overwriting them, and `custom/` is never touched. The GitHub token needs *Pull requests: read and write* (fine-grained) or the `repo` scope (classic). GitHub cannot force PR-only merges on private repos of a free personal account, so this is a workflow, not a lock.
+
+## Public pages and contact
+About, What we do, How we work, Security, FAQ, Contact, Privacy and Terms are server-rendered from `frontend/pages/` by `backend/pages.py`. They say what customers get and never how it is built (a test enforces a deny-list). Set `CONTACT_EMAIL`, `LEGAL_NAME`, `LEGAL_ADDRESS`, `POLICY_EFFECTIVE` and, once a lawyer has reviewed the drafts, `POLICY_REVIEWED=true`; unset values render nothing. Contact messages are stored (read them under **Messages** in `/factory`) and emailed to `CONTACT_EMAIL` only when SMTP is configured. Limits: `CONTACT_PER_HOUR_PER_IP` (5), `CONTACT_PER_DAY` (100).

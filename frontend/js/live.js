@@ -19,7 +19,7 @@ async function live(v){
  <div class="panel"><div class="row"><select id="lrq" style="max-width:420px">${rs.map(r=>`<option value="${r.id}" ${r.id===id?"selected":""}>${esc(r.company_name)} · ${esc(r.agent_type)} · ${r.id}</option>`).join("")}</select>
  <button class="btn" id="lgo">Start build</button><span id="lst" class="badge"></span><span id="lel" class="muted"></span></div><div id="lerr"></div></div>
  <div class="panel pipe-panel"><div class="pipe" id="pipe"></div></div>
- <div class="split live"><div class="panel" id="ldet"></div><div class="panel"><h3>Event log</h3><div id="llog" class="log"></div></div></div>`;
+ <div class="split live"><div class="panel" id="ldet"></div><div class="panel"><h3>Event log</h3><div id="llog" class="log" tabindex="0" role="region" aria-label="Event log"></div></div></div>`;
  $("#lrq").onchange=()=>{SEL.live=$("#lrq").value;LIVE.pick=null;LIVE.last="";poll(true)};
  $("#lgo").onclick=async()=>{$("#lerr").innerHTML="";$("#lgo").disabled=true;
   try{await api(`/requests/${SEL.live}/build`,{method:"POST"});LIVE.pick=null;LIVE.last="";await poll(true)}
