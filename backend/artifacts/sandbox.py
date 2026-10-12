@@ -34,7 +34,7 @@ class RunResult(NamedTuple):
     timed_out: bool
     truncated: bool
     reason: str = ""            # "", "timeout", "memory"
-    isolation: str = ""         # "os-sandbox", "netns" or "python-guard-only"
+    isolation: str = ""         # "os-sandbox" (macOS: deny-default files/exec/network), "netns" (Linux: network only, NO filesystem isolation) or "python-guard-only"
 
 
 def enabled() -> bool:
@@ -61,11 +61,23 @@ def os_isolation_available() -> bool:
 
 
 def _mac_profile(cwd: Path) -> str:
-    allow = {str(cwd), sys.prefix, sys.base_prefix, sys.exec_prefix, str(Path(GUARD).parent)}
+    """Deny-by-default: reads of system/interpreter files and the work dir, writes only inside the work dir, exec only of the
+    interpreter itself, network only to loopback."""
     q = lambda p: p.replace("\\", "\\\\").replace('"', '\\"')
-    return ("(version 1)\n(allow default)\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))\n(allow network-outbound (remote unix-socket))\n"
-            "(deny file-read-data (subpath \"/Users\") (subpath \"/Volumes\") (subpath \"/private/etc\"))\n"
-            "(allow file-read-data " + " ".join(f'(subpath "{q(p)}")' for p in sorted(allow)) + ")\n")
+    py = {str(Path(os.path.realpath(x))) for x in (sys.prefix, sys.base_prefix, sys.exec_prefix, sys.executable)} | {sys.prefix, sys.base_prefix, sys.exec_prefix}
+    py |= {str(Path(p).parent) for p in (sys.executable, os.path.realpath(sys.executable))}
+    reads = sorted(py | {str(cwd), str(Path(os.path.realpath(cwd))), str(Path(GUARD).parent)})
+    sub = lambda ps: " ".join(f'(subpath "{q(p)}")' for p in ps)
+    exe = {sys.executable, os.path.realpath(sys.executable)}
+    return ("(version 1)\n(deny default)\n"
+            "(allow process-fork)\n"
+            f"(allow process-exec {' '.join(f'(literal \"{q(e)}\")' for e in sorted(exe))} {sub(py)})\n"
+            "(allow file-read-metadata)\n(allow signal (target self))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow ipc-posix-shm-read-data)\n"
+            '(allow file-read* (subpath "/usr/lib") (subpath "/System") (subpath "/Library/Preferences/Logging") (subpath "/private/var/db/timezone") (subpath "/usr/share")\n'
+            '  (subpath "/dev") (literal "/") (literal "/private") (literal "/private/var") (literal "/var") (literal "/Users") (literal "/Library"))\n'
+            f"(allow file-read* {sub(reads)})\n"
+            f"(allow file-write* {sub(sorted({str(cwd), str(Path(os.path.realpath(cwd)))}))} (literal \"/dev/null\"))\n"
+            '(allow network-outbound (remote ip "localhost:*") (remote unix-socket))\n(allow network-inbound (local ip "localhost:*"))\n(allow network-bind (local ip "localhost:*"))\n')
 
 
 def _prefix(cwd: Path):

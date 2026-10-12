@@ -26,6 +26,88 @@ SECRETISH = re.compile(r"(password|passwd|secret|token|api_?key|dsn|connection_?
 SAFE_TOOLS = {"Read", "Grep", "Glob"}
 
 
+# Block constructors that reach outside the process (disk, network, databases, secrets). Their targets must come from the
+# customer's configuration, never from literals the model wrote - otherwise generated code could point them at any file or host.
+TARGETED = {("nx_fs", "Roots"), ("nx_http", "HttpGet"), ("nx_db", "connect"), ("nx_config", "load"), ("nx_config", "secret"), ("nx_audit", "Audit")}
+DRIVERS = {"sqlite", "postgres", "mysql"}
+CFG_ROOTS = {"config", "ctx"}
+CFG_WRAPPERS = {"int", "float", "bool", "list", "tuple", "len", "sorted", "set", "dict", "str"}
+
+
+def _cfg(node, ok):
+    """True when the expression is built only from configuration values (names in `ok`), numbers/bools/None and dict keys."""
+    if isinstance(node, ast.Constant):
+        return not isinstance(node.value, (str, bytes))
+    if isinstance(node, ast.Name):
+        return node.id in ok
+    if isinstance(node, ast.Attribute):
+        return _cfg(node.value, ok)
+    if isinstance(node, ast.Subscript):
+        key = node.slice
+        return _cfg(node.value, ok) and ((isinstance(key, ast.Constant) and isinstance(key.value, str)) or _cfg(key, ok))
+    if isinstance(node, ast.Call):
+        f = node.func
+        if isinstance(f, ast.Attribute) and f.attr in ("get", "items", "values", "keys") and _cfg(f.value, ok):
+            args = node.args[:1] if f.attr == "get" and node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str) else []
+            return all(_cfg(a, ok) for a in node.args[len(args):]) and all(_cfg(k.value, ok) for k in node.keywords)
+        if isinstance(f, ast.Attribute) and f.attr == "secret" and isinstance(f.value, ast.Name) and f.value.id == "nx_config" and node.args:
+            return _cfg(node.args[0], ok) and all(isinstance(a, ast.Constant) or _cfg(a, ok) for a in node.args[1:])
+        if isinstance(f, ast.Name) and f.id in CFG_WRAPPERS:
+            return all(_cfg(a, ok) for a in node.args) and not node.keywords
+        return False
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(_cfg(e, ok) for e in node.elts)
+    if isinstance(node, ast.Starred):
+        return _cfg(node.value, ok)
+    if isinstance(node, ast.BinOp):
+        return _cfg(node.left, ok) and _cfg(node.right, ok)
+    if isinstance(node, ast.BoolOp):
+        return all(_cfg(v, ok) for v in node.values)
+    if isinstance(node, ast.IfExp):
+        return all(_cfg(x, ok) for x in (node.test, node.body, node.orelse))
+    if isinstance(node, ast.Compare):
+        return _cfg(node.left, ok) and all(_cfg(c, ok) for c in node.comparators)
+    if isinstance(node, ast.UnaryOp):
+        return _cfg(node.operand, ok)
+    return False
+
+
+def _targeted_calls(tree):
+    """Yield (call, function) for calls to TARGETED constructors, whether written nx_x.f(...) or imported by name."""
+    mods = {}
+    for n in ast.walk(tree):
+        if isinstance(n, ast.ImportFrom) and n.module in NX_MODULES:
+            for a in n.names:
+                mods[a.asname or a.name] = (n.module, a.name)
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)] or []:
+        ok = {a.arg for a in fn.args.args if a.arg in CFG_ROOTS}
+        for st in ast.walk(fn):
+            if isinstance(st, ast.Assign) and len(st.targets) == 1 and isinstance(st.targets[0], ast.Name) and _cfg(st.value, ok):
+                ok.add(st.targets[0].id)
+        for c in ast.walk(fn):
+            if isinstance(c, ast.Call):
+                f = c.func
+                key = (f.value.id, f.attr) if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) else mods.get(f.id) if isinstance(f, ast.Name) else None
+                if key in TARGETED:
+                    yield c, key, ok
+
+
+def _check_targets(tree, add):
+    seen = set()
+    for call, key, ok in _targeted_calls(tree):
+        if id(call) in seen:
+            continue
+        seen.add(id(call))
+        args = list(call.args)
+        if key == ("nx_db", "connect") and args and isinstance(args[0], ast.Constant) and args[0].value in DRIVERS:
+            args = args[1:]
+        if key == ("nx_config", "secret") and len(args) > 1 and isinstance(args[1], ast.Constant) and isinstance(args[1].value, str):
+            args = args[:1]
+        vals = args + [k.value for k in call.keywords if not (k.arg == "kind" and isinstance(k.value, ast.Constant) and k.value.value in DRIVERS)]
+        if not call.args and not call.keywords and key not in {("nx_config", "load")} or any(not _cfg(v, ok) for v in vals):
+            add(call, f"{key[0]}.{key[1]}() must be given values taken from the configuration (config[...]), never hard-coded paths, hosts or connection strings")
+
+
 def _literal(node):
     try:
         ast.literal_eval(node)
@@ -87,6 +169,7 @@ def check_source(src, entry="handle", min_args=1, max_args=2):
                 add(node, f"attribute '{node.attr}' is not allowed")
         elif isinstance(node, ast.FunctionDef) and node.end_lineno and node.end_lineno - node.lineno > MAX_LINES:
             add(node, f"function '{node.name}' is too long (more than {MAX_LINES} lines)")
+    _check_targets(tree, add)
     fn = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == entry), None)
     if fn is None:
         probs.append(f"a top-level function named '{entry}' is required")

@@ -98,6 +98,37 @@ def test_every_escape_attempt_is_rejected(name):
     assert problems(ESCAPES[name]), f"accepted: {name}"
 
 
+HARDCODED = {
+    "fs root hard-coded": "import nx_fs\ndef handle(args, ctx):\n    return nx_fs.Roots(['/']).read_text('etc/passwd')",
+    "fs roots keyword": "import nx_fs\ndef handle(args, ctx):\n    return nx_fs.Roots(roots=['/etc'])",
+    "fs default literal": "import nx_fs\ndef handle(args, ctx):\n    return nx_fs.Roots(ctx['config'].get('roots', ['/']))",
+    "http metadata host": "import nx_http\ndef handle(args, ctx):\n    return nx_http.HttpGet(['169.254.169.254'], allow_private_hosts=['169.254.169.254']).get('http://169.254.169.254/')",
+    "http wildcard": "import nx_http\ndef handle(args, ctx):\n    return nx_http.HttpGet(['*'])",
+    "http appended host": "import nx_http\ndef handle(args, ctx):\n    return nx_http.HttpGet(ctx['hosts'] + ['evil.example'])",
+    "db path": "import nx_db\ndef handle(args, ctx):\n    return nx_db.connect('sqlite', path='/etc/hosts')",
+    "db dsn": "import nx_db\ndef handle(args, ctx):\n    return nx_db.connect('postgres', dsn='postgresql://u:p@internal-db/x')",
+    "config load path": "import nx_config\ndef handle(args, ctx):\n    return nx_config.load('/etc/passwd')",
+    "audit path": "import nx_audit\ndef handle(args, ctx):\n    return nx_audit.Audit('/Users/x/.ssh/authorized_keys')",
+    "from-import form": "from nx_fs import Roots\ndef handle(args, ctx):\n    return Roots(['/'])",
+    "joined string path": "import nx_fs\ndef handle(args, ctx):\n    return nx_fs.Roots([f'/etc/{args[\"x\"]}'])",
+}
+
+
+@pytest.mark.parametrize("name", list(HARDCODED))
+def test_block_targets_must_come_from_the_configuration_never_from_code(name):
+    probs = problems(HARDCODED[name])
+    assert probs and any("configuration" in p for p in probs), (name, probs)
+
+
+def test_block_calls_that_take_their_targets_from_the_config_are_accepted():
+    src = ("import nx_fs, nx_http, nx_db, nx_config, nx_audit\n"
+           "def setup(config):\n"
+           "    db = nx_db.connect('sqlite', path=config['database']['path'], timeout_s=int(config['timeout_seconds']), max_rows=500)\n"
+           "    return {'fs': nx_fs.Roots(config['roots']), 'http': nx_http.HttpGet(config['allow_hosts'], timeout=5, max_bytes=100000), 'db': db,\n"
+           "            'audit': nx_audit.Audit(config['audit_log']), 'pg': nx_db.connect('postgres', dsn=nx_config.secret(config['database'], 'dsn_env'))}\n")
+    assert problems(src, entry="setup", min_args=1, max_args=1) == []
+
+
 def test_safe_everyday_code_is_still_accepted_after_the_hardening():
     src = ("import json, csv, re, math\nfrom io import StringIO\nfrom collections import Counter, defaultdict\nfrom datetime import datetime, timezone\n"
            "from decimal import Decimal\nfrom statistics import mean\nimport itertools, functools, operator\n"

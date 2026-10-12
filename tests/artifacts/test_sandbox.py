@@ -56,7 +56,7 @@ def test_infinite_loops_are_killed_by_the_timeout(tmp_path):
 
 def test_descendant_processes_are_killed_too(tmp_path):
     marker = f"nx-sandbox-{os.getpid()}-{int(time.time())}"
-    body = f"import subprocess, time\nsubprocess.Popen(['sleep', '60', '{marker}'])\nwhile True:\n    time.sleep(0.1)"
+    body = f"import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)', '{marker}'])\nwhile True:\n    time.sleep(0.1)"
     r = sb.run_python(script(tmp_path, body), cwd=tmp_path, timeout_s=2)
     time.sleep(0.5)
     left = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True).stdout.split()
@@ -127,3 +127,28 @@ def test_memory_watchdog_kills_a_hog_on_every_platform(tmp_path):
 def test_an_output_flood_cannot_fill_memory(tmp_path):
     r = sb.run_python(script(tmp_path, "import sys\nchunk = 'x' * 1_000_000\nfor _ in range(400):\n    sys.stdout.write(chunk)"), cwd=tmp_path, fsize_mb=5, timeout_s=20)
     assert r.truncated and len(r.stdout) <= sb.MAX_OUTPUT and not r.ok
+
+
+# ---- review findings: the OS profile must not be "allow everything"
+@pytest.mark.skipif(sys.platform != "darwin", reason="the file-write/exec profile is the macOS sandbox-exec one")
+def test_macos_profile_denies_writes_outside_the_work_dir_and_running_other_programs(tmp_path):
+    probe = Path.home() / ".nexara-sandbox-write-probe"
+    body = (f"import subprocess, sys\n"
+            f"try:\n    open({str(probe)!r}, 'w').write('x'); print('WROTE-HOME')\nexcept OSError:\n    print('write-denied')\n"
+            f"try:\n    open('/tmp/nexara-sandbox-write-probe', 'w').write('x'); print('WROTE-TMP')\nexcept OSError:\n    print('tmp-denied')\n"
+            f"try:\n    subprocess.run(['/bin/ls', '/'], capture_output=True, check=True); print('RAN-LS')\nexcept (OSError, subprocess.CalledProcessError):\n    print('exec-denied')\n"
+            f"open('inside.txt', 'w').write('ok'); print('wrote-inside')\n"
+            f"try:\n    open('/etc/hosts').read(); print('READ-ETC')\nexcept OSError:\n    print('etc-denied')\n")
+    try:
+        r = sb.run_python(script(tmp_path, body), cwd=tmp_path)
+    finally:
+        probe.unlink(missing_ok=True)
+        Path("/tmp/nexara-sandbox-write-probe").unlink(missing_ok=True)
+    out = r.stdout
+    assert "write-denied" in out and "tmp-denied" in out and "exec-denied" in out and "wrote-inside" in out and "etc-denied" in out, out + r.stderr
+    assert "WROTE" not in out and "RAN-LS" not in out and "READ-ETC" not in out and (tmp_path / "inside.txt").exists()
+
+
+def test_the_interpreter_can_still_run_its_own_subprocesses_inside_the_sandbox(tmp_path):
+    body = "import subprocess, sys\nr = subprocess.run([sys.executable, '-c', 'print(42)'], capture_output=True, text=True)\nprint(r.stdout.strip())"
+    assert sb.run_python(script(tmp_path, body), cwd=tmp_path).stdout.strip() == "42"

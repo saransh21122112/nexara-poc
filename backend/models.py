@@ -1,6 +1,6 @@
 import re
 from typing import Any, Literal
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 AGENT_TYPES = ["Plugin", "Skill", "MCP server", "Tool", "Custom"]   # what the customer wants built; the DB column keeps its old name `agent_type`
 AgentType = Literal["Plugin", "Skill", "MCP server", "Tool", "Custom"]
@@ -105,6 +105,88 @@ class TestScenario(BaseModel):
     must_call_tool: str | None = None
 
 
+class _Strict(BaseModel):
+    model_config = {"extra": "forbid"}
+
+
+class Example(_Strict):
+    """One executable expectation. For MCP tools and scripts `args` are the call arguments; the checks run against the real thing."""
+    args: dict[str, Any]
+    expect_contains: list[str] = []
+    expect_not_contains: list[str] = []
+    expect_error: str | None = None
+
+
+class ConfigKey(_Strict):
+    key: str
+    description: str
+    secret: bool = False                       # secrets hold the NAME of an environment variable (key must end in _env), never the value
+    example: Any = ""
+
+
+class Fixtures(_Strict):
+    """Declarative test data (no code): a SQLite script, files, canned HTTP routes, env values and the test config (placeholders: {{sqlite_path}},
+    {{docs_dir}}, {{http_base}}, {{tmp}})."""
+    sqlite_sql: str | None = None
+    files: dict[str, str] = {}
+    http: dict[str, Any] = {}
+    env: dict[str, str] = {}
+    config: dict[str, Any] = {}
+
+
+class McpToolSpec(_Strict):
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+    read_only: bool = True
+    handler_source: str                        # defines handle(args, ctx) -> JSON-serialisable; may raise nx_mcp.ToolError for expected problems
+    examples: list[Example]
+
+
+class McpServerSpec(_Strict):
+    name: str
+    description: str
+    blocks: list[str] = []
+    packages: list[str] = []
+    config_schema: list[ConfigKey] = []
+    setup_source: str = "def setup(config):\n    return {}"          # builds the shared context (db, guards, audit) from the config
+    fixtures: Fixtures = Fixtures()
+    tools: list[McpToolSpec]
+    instructions: str = ""
+
+
+class ScriptSpec(_Strict):
+    name: str
+    description: str
+    blocks: list[str] = []
+    handler_source: str                        # defines handle(args) -> JSON-serialisable; may raise nx_cli.UserError for bad input
+    examples: list[Example]
+    fixtures: Fixtures = Fixtures()
+    inputs: dict[str, Any] = {}                # documented input shape (shown in the README and the wrapper skill)
+
+
+class SkillRef(_Strict):
+    name: str
+    content: str
+
+
+class SkillSpec(_Strict):
+    name: str
+    description: str
+    argument_hint: str = ""
+    body: str
+    references: list[SkillRef] = []
+    allowed_tools: list[str] = []              # Read, Grep, Glob only
+    uses: list[str] = []                       # script names, or "server/tool" for MCP tools
+
+
+class SubagentSpec(_Strict):
+    name: str
+    description: str
+    instructions: str
+    tools: list[str] = ["Read", "Grep", "Glob"]
+
+
 class AgentSpec(BaseModel):
     agent_name: str = Field(min_length=1)
     purpose: str = Field(min_length=1)
@@ -118,6 +200,21 @@ class AgentSpec(BaseModel):
     safety_restrictions: list[str] = Field(min_length=1)
     test_scenarios: list[TestScenario] = Field(min_length=1)
     success_criteria: list[str] = Field(min_length=1)
+    # Structured deliverables (optional: specs without them generate the original layout). See docs/specs/009.
+    kind: str | None = None
+    skills: list[SkillSpec] = []
+    subagents: list[SubagentSpec] = []
+    scripts: list[ScriptSpec] = []
+    mcp_servers: list[McpServerSpec] = []
+
+    @model_validator(mode="after")
+    def _static_gate(self):
+        if self.skills or self.subagents or self.scripts or self.mcp_servers:
+            from .artifacts import validate
+            problems = validate.check_spec(self.model_dump())
+            if problems:
+                raise ValueError("; ".join(problems[:12]))
+        return self
 
 
 class RunIn(BaseModel):
