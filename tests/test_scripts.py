@@ -16,7 +16,7 @@ SLUG = f"{REPO['owner']}/{REPO['name']}"
 
 
 def script(path: Path, body: str):
-    path.write_text("#!/bin/sh\n" + body)
+    path.write_text("#!/bin/bash\n" + body)   # the fake git uses bash-isms; on Linux /bin/sh is dash
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
