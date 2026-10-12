@@ -9,12 +9,12 @@ STD = set("""json re math datetime decimal statistics csv io collections itertoo
 difflib heapq bisect operator hashlib base64 html zoneinfo __future__""".split())
 PACKAGES = {"psycopg[binary]", "pymysql"}
 BANNED_NAMES = set("""eval exec compile __import__ open input breakpoint globals locals vars getattr setattr delattr type exit quit print __builtins__ __loader__
-__spec__ help memoryview""".split())
+__spec__ help memoryview dir ForwardRef singledispatch singledispatchmethod make_dataclass""".split())
 # Allowed stdlib modules expose OTHER modules and file openers as attributes (statistics.sys, json.codecs, io.open, ...), and a few helpers reach dunder
 # attributes through strings (operator.attrgetter, string.Formatter). Those names are banned wherever they appear, and so is every underscore attribute.
 BANNED_ATTRS = {"format", "format_map", "mro", "f_globals", "f_locals", "f_back", "gi_frame", "cr_frame", "tb_frame", "func_globals",
                 "open", "FileIO", "open_code", "popen", "system", "attrgetter", "methodcaller", "Formatter", "vformat", "get_field", "modules", "meta_path",
-                "path_hooks", "path_importer_cache", "import_module", "find_spec", "reload", "currentframe", "stack", "getframe", "get_type_hints",
+                "path_hooks", "path_importer_cache", "import_module", "find_spec", "reload", "currentframe", "stack", "getframe", "get_type_hints", "ForwardRef", "singledispatch", "singledispatchmethod", "make_dataclass", "register", "evaluate",
                 "sys", "os", "subprocess", "builtins", "importlib", "ctypes", "codecs", "pickle", "marshal", "shutil", "socket", "ssl", "inspect", "gc",
                 "threading", "signal", "runpy", "code", "tempfile", "glob", "types", "pathlib", "posixpath", "ntpath", "genericpath", "io", "ast", "weakref",
                 "multiprocessing", "asyncio", "selectors", "select", "mmap", "fcntl", "resource", "pty", "tty", "termios", "readline", "zipimport", "pkgutil"}
@@ -156,6 +156,8 @@ def check_source(src, entry="handle", min_args=1, max_args=2):
             for a in node.names:
                 if a.name in BANNED_ATTRS or a.name.startswith("_") and m != "__future__":
                     add(node, f"importing '{a.name}' is not allowed")
+        elif isinstance(node, ast.MatchClass) and any(k.startswith("_") or k in BANNED_ATTRS for k in node.kwd_attrs):
+            add(node, "class patterns may not match underscore or restricted attributes")
         elif isinstance(node, ast.AsyncFunctionDef):
             add(node, "async functions are not allowed")
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
@@ -222,6 +224,15 @@ def _fixtures(fx, where):
         probs.append(f"{where}: sqlite_sql must be text")
     if isinstance(fx.get("sqlite_sql"), str) and re.search(r"\b(attach|load_extension|pragma)\b", fx["sqlite_sql"], re.I):
         probs.append(f"{where}: fixture SQL may not use ATTACH, PRAGMA or load_extension")
+    env = fx.get("env") or {}
+    if not isinstance(env, dict):
+        probs.append(f"{where}: env must be an object")
+    else:
+        for k, v in env.items():
+            if not isinstance(k, str) or not re.fullmatch(r"[A-Z][A-Z0-9_]{0,40}", k) or re.match(r"(NX_|PYTHON|LD_|DYLD_|PATH$|HOME$|TMPDIR$|SHELL$|IFS$)", k):
+                probs.append(f"{where}: fixture env name '{str(k)[:30]}' is not allowed")
+            if not isinstance(v, str) or len(v) > 200:
+                probs.append(f"{where}: fixture env values must be short text")
     for k in (fx.get("http") or {}):
         if not isinstance(k, str) or not re.fullmatch(r"GET /[^\s]*", k):
             probs.append(f"{where}: http fixture keys look like 'GET /path'")

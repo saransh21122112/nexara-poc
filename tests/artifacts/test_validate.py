@@ -1,5 +1,6 @@
 """The static gate for model-written handler code and for the structured spec."""
 import pytest
+from backend.artifacts.validate import _fixtures
 
 from backend.artifacts import validate as v
 
@@ -228,3 +229,23 @@ def test_script_and_skill_specs():
     assert v.check_spec({"kind": "Skill", "skills": [dict(skill, name="x" * 80)]})
     assert v.check_spec({"kind": "Skill", "skills": [dict(skill, body="")]})
     assert v.check_spec({"kind": "Skill", "skills": [dict(skill, allowed_tools=["WebFetch"])]}), "network tools are not allowed in v1"
+
+
+@pytest.mark.parametrize("name", ["NX_GUARD_PATH", "PYTHONPATH", "PYTHONSTARTUP", "LD_PRELOAD", "DYLD_INSERT_LIBRARIES", "PATH", "HOME", "NX_CONFIG", "lower"])
+def test_fixture_env_cannot_change_how_the_interpreter_or_guard_starts(name):
+    assert _fixtures({"env": {name: "x"}}, "t"), name
+
+
+def test_fixture_env_may_carry_plain_data():
+    assert _fixtures({"env": {"CRM_TOKEN": "fake"}}, "t") == []
+
+
+@pytest.mark.parametrize("src", [
+    "def handle(args, ctx):\n    match args:\n        case object(__class__=k):\n            return k\n    return 1",
+    "from typing import ForwardRef\ndef handle(args, ctx):\n    return ForwardRef('1+1')",
+    "import functools\n@functools.singledispatch\ndef g(x):\n    return 1\ndef handle(args, ctx):\n    return g(1)",
+    "import dataclasses\ndef handle(args, ctx):\n    return dataclasses.make_dataclass('A', [('x', 'int')])",
+    "def handle(args, ctx):\n    return dir(ctx)",
+])
+def test_string_evaluating_and_reflection_helpers_are_rejected(src):
+    assert problems(src)

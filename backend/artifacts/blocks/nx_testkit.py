@@ -53,6 +53,12 @@ class _Routes(BaseHTTPRequestHandler):
     do_POST = do_PUT = do_DELETE = lambda self: (self.send_response(405), self.end_headers())
 
 
+def _safe_env(env):
+    """Fixture env vars may add data (a fake token), never change how the interpreter or the guard starts."""
+    bad = ("NX_", "PYTHON", "LD_", "DYLD_")
+    return {k: str(v) for k, v in (env or {}).items() if isinstance(k, str) and k not in ("PATH", "HOME", "TMPDIR") and not k.startswith(bad)}
+
+
 def _build(fx, tmp, config_example):
     ph = {"{{tmp}}": str(tmp)}
     if fx.get("sqlite_sql"):
@@ -121,7 +127,7 @@ def _run_mcp(spec, base, tmp, cfg_path):
 
     def check(name, ok, detail=""):
         res.append({"name": name, "ok": bool(ok), "detail": detail})
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp), "TMPDIR": str(tmp), "NX_CONFIG": str(cfg_path), **(spec.get("fixtures", {}).get("env") or {})}
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp), "TMPDIR": str(tmp), "NX_CONFIG": str(cfg_path), **_safe_env(spec.get("fixtures", {}).get("env"))}
     rpc = _Rpc(_cmd(base / spec["entry"]), env, str(tmp))
     try:
         init = rpc.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "nx-testkit", "version": "1"}})
@@ -151,7 +157,7 @@ def _run_mcp(spec, base, tmp, cfg_path):
 
 def _run_script(spec, base, tmp, cfg_path):
     res = []
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp), "TMPDIR": str(tmp), "NX_CONFIG": str(cfg_path), **(spec.get("fixtures", {}).get("env") or {})}
+    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(tmp), "TMPDIR": str(tmp), "NX_CONFIG": str(cfg_path), **_safe_env(spec.get("fixtures", {}).get("env"))}
     entry = base / spec["entry"]
     for i, ex in enumerate(spec["examples"], 1):
         p = subprocess.run(_cmd(entry), input=json.dumps(ex["args"]), capture_output=True, text=True, env=env, cwd=str(tmp), timeout=TIMEOUT)
