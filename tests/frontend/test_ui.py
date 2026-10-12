@@ -120,3 +120,21 @@ def test_wrong_factory_password_is_refused_without_a_token(page, site):
     page.fill("#pw", "wrong"); page.press("#pw", "Enter")
     page.wait_for_selector("#lerr:not([hidden])")
     assert page.is_hidden("#app") and page.evaluate("sessionStorage.getItem('ft')") is None
+
+
+@pytest.mark.parametrize("width", [390, 768, 1280])
+def test_long_chips_wrap_inside_their_card_instead_of_overflowing(page, site, width):
+    """Regression: capability chips on the Live build spec card were nowrap, ran past the card and widened the page."""
+    open_page(page, site, "/factory", width)
+    page.fill("#pw", PASSWORD); page.press("#pw", "Enter")
+    page.wait_for_selector("#app:not([hidden])")
+    page.click("button.nav[data-v=overview]"); page.wait_for_timeout(500)       # needs no data: the card is injected into the view
+    long = "Execute validated single-statement read-only SELECT queries with enforced row limits, timeouts and an allowlist of approved tables and columns"
+    page.evaluate("""(t) => { const d = document.getElementById('view'); d.innerHTML = '<div class="panel"><div class="specard"><h3>Name</h3><p>Purpose</p><div class="chips">'
+        + [t, t.replace('Execute', 'Reject'), 'Short one'].map(x => '<span class="tag">' + x + '</span>').join('') + '</div></div></div>'; }""", long)
+    r = page.evaluate("""() => { const card = document.querySelector('.specard').getBoundingClientRect(), de = document.documentElement;
+        return { over: de.scrollWidth - de.clientWidth, outside: [...document.querySelectorAll('.specard .tag')].filter(t => t.getBoundingClientRect().right > card.right + 1).length,
+                 tall: [...document.querySelectorAll('.specard .tag')].filter(t => t.textContent.length > 40).every(t => t.getBoundingClientRect().height > 28) }; }""")
+    assert r["over"] <= 0 and r["outside"] == 0, r
+    if width <= 768:
+        assert r["tall"], "long chips should wrap onto several lines on narrow screens"

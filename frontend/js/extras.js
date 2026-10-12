@@ -54,7 +54,7 @@ async function playground(v){
    $("#tlst").textContent="";$("#tlprev").innerHTML=`<h3 style="margin-top:14px">Proposed new cases</h3>${x.scenarios.map((s,i)=>caseHtml(s,i,true)).join("")}<div class="row" style="margin-top:10px"><button class="btn" id="tlsave">Add selected to this build</button><span class="muted">They are saved to the specification and shipped with the next update.</span></div><div id="tlsm"></div>`;
    $("#tlprev").querySelectorAll("[data-pre]").forEach(c=>c.checked=true);
    $("#tlsave").onclick=async()=>{const pick=[...$("#tlprev").querySelectorAll("[data-pre]")].filter(c=>c.checked).map(c=>x.scenarios[+c.dataset.i]);if(!pick.length)return;
-    try{const a=cur();const spec={...a.spec,test_scenarios:[...(a.spec.test_scenarios||[]),...pick]};const saved=await api(`/agents/${a.id}`,{method:"PUT",body:JSON.stringify(spec)});a.spec=saved.spec||spec;$("#tlprev").innerHTML='<div class="ok-box">Added.</div>';draw()}catch(e){$("#tlsm").innerHTML=`<div class="bad">${esc(e.message)}</div>`}}}
+    try{const a=cur();const saved=await api(`/agents/${a.id}/test-scenarios`,{method:"POST",body:JSON.stringify({scenarios:pick})});a.spec=saved.spec;$("#tlprev").innerHTML='<div class="ok-box">Added.</div>';draw()}catch(e){$("#tlsm").innerHTML=`<div class="bad">${esc(e.message)}</div>`}}}
   catch(e){$("#tlst").textContent="";$("#tlprev").innerHTML=`<div class="bad">${e.status===503?"<b>Configuration needed.</b> ":""}${esc(e.message)}</div>`}b.disabled=false};
  $("#tlrun").onclick=async()=>{const sc=cur().spec.test_scenarios||[];const picks=[...$("#tlcases").querySelectorAll("input:checked")].map(c=>sc[+c.dataset.i]).filter(Boolean);
   if(!picks.length){$("#tlst").textContent="Select at least one case.";return}

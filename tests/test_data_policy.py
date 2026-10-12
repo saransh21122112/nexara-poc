@@ -84,3 +84,32 @@ def test_generate_tests_rejects_bad_output_bad_input_and_missing_auth(client, mo
     assert client.post("/api/agents/AGT-NOPE/generate-tests", json={}).status_code == 404
     client.headers.pop("X-Factory-Token")
     assert client.post(f"/api/agents/{a['id']}/generate-tests", json={}).status_code == 401
+
+
+# ---- adding accepted test cases saves through a small dedicated call (not a full-spec PUT)
+def test_accepted_test_cases_are_appended_deduplicated_and_validated(client, monkeypatch):
+    a = _agent(client, monkeypatch)
+    new = [{"name": "Late order", "task": "Order ORD-9 is 3 days late. Draft a reply.", "expected_behavior": "apologises", "must_contain": ["sorry"]},
+           {"name": "No data", "task": "Reply to an empty message.", "expected_behavior": "asks for details"}]
+    r = client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": new})
+    assert r.status_code == 200
+    names = [s["name"] for s in r.json()["spec"]["test_scenarios"]]
+    assert names == [s["name"] for s in SPEC["test_scenarios"]] + ["Late order", "No data"]
+    again = client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": new}).json()          # same cases again: no duplicates
+    assert [s["name"] for s in again["spec"]["test_scenarios"]] == names
+    assert client.get(f"/api/agents/{a['id']}").json()["spec"]["purpose"] == SPEC["purpose"]             # nothing else touched
+
+
+def test_test_case_save_rejects_bad_input_unknown_agents_and_missing_auth(client, monkeypatch):
+    a = _agent(client, monkeypatch)
+    ok = {"name": "x", "task": "do it", "expected_behavior": "done"}
+    assert client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": [{"name": "x"}]}).status_code == 422
+    assert client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": []}).status_code == 422
+    assert client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": [{**ok, "name": f"n{i}"} for i in range(11)]}).status_code == 422
+    assert client.post("/api/agents/AGT-NOPE/test-scenarios", json={"scenarios": [ok]}).status_code == 404
+    for i in range(2):                                                                                     # 1 existing + 16 = 17 cases
+        assert client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": [{**ok, "name": f"m{i}{j}", "task": f"t{i}{j}"} for j in range(8)]}).status_code == 200
+    capped = client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": [{**ok, "name": f"over{j}", "task": f"o{j}"} for j in range(4)]})
+    assert capped.status_code == 409 and "20" in capped.json()["detail"]                                  # a build keeps a sensible number of cases
+    client.headers.pop("X-Factory-Token")
+    assert client.post(f"/api/agents/{a['id']}/test-scenarios", json={"scenarios": [ok]}).status_code == 401

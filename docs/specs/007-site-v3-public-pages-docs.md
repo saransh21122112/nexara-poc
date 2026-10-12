@@ -33,6 +33,7 @@ owner: saransh21122112
 9. `lookup_business_data` and `data/sample_business_data.json` are removed; specs are generated without any assumed dataset and every test scenario carries its own inline synthetic input. Old stored specs that mention the tool still adapt and run.
 10. `RequestIn.examples` (optional, <= 4000 chars) is stored, passed to spec/test generation, assistable.
 11. Test lab: `POST /api/agents/{id}/generate-tests` returns validated extra scenarios (not saved until the user accepts); "Skip testing" shows how to add the delivered work to Claude from the private repo.
+15. Accepted generated test cases are saved with `POST /api/agents/{id}/test-scenarios` (only the new cases are sent, duplicates are skipped, at most 10 per call and 20 per build); generic API failures in the dashboard show the HTTP status.
 12. `scripts/check_spec.py` fails a PR that changes `backend/` or `frontend/` without changing `docs/specs/`, unless the PR body contains `No-spec: <reason>`.
 
 ## Acceptance criteria
@@ -45,6 +46,7 @@ owner: saransh21122112
 | 8 | CSP header, no inline scripts | `tests/test_pages.py::test_csp_*` |
 | 9-11 | data policy, examples, generate-tests | `tests/test_data_policy.py` |
 | 12 | spec check logic | `tests/test_sdd.py` |
+| 7 | long chips (sentences inside tags) wrap inside their card and never widen the page | `tests/frontend/test_ui.py::test_long_chips_wrap_inside_their_card_instead_of_overflowing` |
 | 6-7 | browser audit (overflow, scrollbars, phone) | manual per `docs/ui-quality.md`: 12 pages x 7 widths (320-1920) had no overflow, no visible page scrollbar, tap targets >= 32px, one h1; axe-core (WCAG A/AA/2.1AA + best-practice) clean on every public page and every dashboard view; no-JS, reduced-motion, 200% zoom, keyboard and menu behaviour checked; no console or CSP errors |
 | docs | diagrams parse and stay in sync, specs well-formed, links resolve | `tests/test_docs.py` |
 
