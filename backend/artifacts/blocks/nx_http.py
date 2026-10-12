@@ -1,5 +1,6 @@
 """Allowlisted read-only HTTP GET client (vetted block, stdlib only): exact or *.wildcard hosts, no credentials in URLs, no private
 addresses unless listed, manual redirects re-checked on every hop, response size cap, GET only."""
+import http.client
 import ipaddress
 import json as _json
 import socket
@@ -24,6 +25,37 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _PinnedHTTP(http.client.HTTPConnection):
+    """Connects to the address that was checked, never to a fresh DNS answer (defeats DNS rebinding)."""
+    def __init__(self, *a, pinned_ip=None, **k):
+        super().__init__(*a, **k)
+        self.pinned_ip = pinned_ip
+
+    def connect(self):
+        self.sock = socket.create_connection((self.pinned_ip, self.port), self.timeout)
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    def __init__(self, *a, pinned_ip=None, **k):
+        super().__init__(*a, **k)
+        self.pinned_ip = pinned_ip
+
+    def connect(self):
+        sock = socket.create_connection((self.pinned_ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+def _opener(ip):
+    class H(urllib.request.HTTPHandler):
+        def http_open(self, req):
+            return self.do_open(lambda host, **kw: _PinnedHTTP(host, pinned_ip=ip, **kw), req)
+
+    class S(urllib.request.HTTPSHandler):
+        def https_open(self, req):
+            return self.do_open(lambda host, **kw: _PinnedHTTPS(host, pinned_ip=ip, **kw), req)
+    return urllib.request.build_opener(_NoRedirect, H, S)
+
+
 class HttpGet:
     def __init__(self, allow_hosts, *, timeout=10, max_bytes=1_000_000, headers=None, allow_insecure_hosts=(), allow_private_hosts=(), max_redirects=3):
         if not allow_hosts:
@@ -32,7 +64,6 @@ class HttpGet:
         self.insecure = {h.lower() for h in allow_insecure_hosts}
         self.private_ok = {h.lower() for h in allow_private_hosts}
         self.timeout, self.max_bytes, self.headers, self.max_redirects = timeout, max_bytes, dict(headers or {}), max_redirects
-        self.opener = urllib.request.build_opener(_NoRedirect)
 
     def allowed_host(self, host):
         host = (host or "").lower()
@@ -62,20 +93,21 @@ class HttpGet:
             raise HttpDenied("That host is not on the allowlist.")
         if u.scheme == "http" and host not in self.insecure:
             raise HttpDenied("Plain http is not allowed for this host.")
+        ips = self._addresses(host)
         if host not in self.private_ok:                       # an allowlisted NAME must not point at a private/loopback/metadata address
-            for ip in self._addresses(host):
+            for ip in ips:
                 if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
                     raise HttpDenied("Private addresses are not allowed.")
-        return u
+        return u, str(ips[0])
 
     def get(self, url, params=None):
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
         for _ in range(self.max_redirects + 1):
-            u = self._check(url)
+            u, ip = self._check(url)
             req = urllib.request.Request(url, method="GET", headers={"User-Agent": "nexara-tool/1", "Accept": "application/json, text/plain;q=0.8", **self.headers})
             try:
-                resp = self.opener.open(req, timeout=self.timeout)
+                resp = _opener(ip).open(req, timeout=self.timeout)
             except urllib.error.HTTPError as e:
                 if e.code in (301, 302, 303, 307, 308) and e.headers.get("Location"):
                     url = urllib.parse.urljoin(url, e.headers["Location"])

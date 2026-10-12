@@ -82,7 +82,7 @@ class _MyDb:
         u = urlparse(dsn)
         host = u.hostname or ""
         kw = {"host": host, "port": u.port or 3306, "user": u.username, "password": u.password, "database": (u.path or "/").lstrip("/") or None,
-              "connect_timeout": int(timeout_s), "read_timeout": int(timeout_s), "autocommit": False}
+              "connect_timeout": int(timeout_s), "read_timeout": int(timeout_s), "autocommit": False, "charset": "utf8mb4"}
         if host not in ("localhost", "127.0.0.1", "::1"):
             kw["ssl"] = {"ssl": {}}
         try:

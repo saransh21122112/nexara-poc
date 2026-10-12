@@ -32,6 +32,13 @@ class Redactor:
             if kind not in KINDS:
                 raise ValueError(f"unknown mask kind: {kind}")
 
+    def assert_disjoint(self, allow):
+        """Masking works on RESULT column names, so `SELECT email AS e` or `LOWER(email)` would come back unmasked. Therefore a masked or blocked column
+        must never be readable through free-form SQL: raise if any appears in a table allowlist (expose it through a fixed-shape tool instead)."""
+        bad = sorted({c for cols in allow.values() for c in cols if c.lower() in self.masked or c.lower() in self.blocked})
+        if bad:
+            raise ValueError(f"These columns are masked or blocked and must not be in the SQL allowlist: {', '.join(bad)}")
+
     def apply(self, rows):
         out = []
         for row in rows:

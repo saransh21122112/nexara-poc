@@ -24,8 +24,8 @@ BANNED = set("""insert update delete drop alter create truncate grant revoke cal
 attach detach vacuum lock explain analyze begin commit rollback savepoint declare handler prepare deallocate do import export reindex cluster comment checkpoint
 listen notify unlisten refresh rename fetch open close values window recursive returning""".split())
 KEYWORDS = set("""select distinct all from where group by order having limit offset as and or not in is null like ilike between exists case when then else end join inner
-left right full outer cross natural on using union intersect except asc desc true false current_date current_timestamp interval date timestamp time over partition
-rows range unbounded preceding following current row with escape""".split())
+left right full outer cross natural on using union intersect except asc desc true false current_date current_timestamp over partition with""".split())
+TYPED = {"date", "timestamp", "time", "interval"}          # keywords only as typed literals (DATE '2026-01-01'); anywhere else they are ordinary names and get checked
 CLAUSE_END = {"where", "group", "order", "having", "limit", "offset", "union", "intersect", "except", "on", "using"}
 FUNCS = set("""count sum avg min max round floor ceil ceiling abs coalesce nullif ifnull lower upper length char_length substr substring trim ltrim rtrim concat date datetime
 strftime date_trunc extract cast year month day hour minute second greatest least row_number rank dense_rank lag lead sign power sqrt mod left right position instr
@@ -92,8 +92,12 @@ def _val(t):
     return t[1] if t else None
 
 
-def validate(sql, allow, *, max_limit=1000, star_tables=(), max_chars=8000, max_tokens=600, max_depth=8):
+def validate(sql, allow, *, max_limit=1000, star_tables=(), reserved=(), forbidden=(), max_chars=8000, max_tokens=600, max_depth=8):
+    """reserved: every REAL column name of the tables (readable or not): aliases may never reuse them, so a name in WHERE/GROUP BY can only bind to a
+    readable column. forbidden: names that may not appear as identifiers anywhere (blocked / masked columns)."""
     allow = {k.lower(): {c.lower() for c in v} for k, v in allow.items()}
+    reserved = {c.lower() for c in reserved}
+    forbidden = {c.lower() for c in forbidden}
     star_tables = {t.lower() for t in star_tables}
     toks = _tokenize(sql, max_chars, max_tokens)
     if toks and toks[-1] == ("p", ";"):
@@ -121,9 +125,12 @@ def validate(sql, allow, *, max_limit=1000, star_tables=(), max_chars=8000, max_
             raise SqlRejected("Locking clauses are not allowed.")
         if t == ("word", "lock"):
             raise SqlRejected("Locking clauses are not allowed.")
+        if t[0] in ("word", "qid") and t[1].lower() in forbidden:
+            raise SqlRejected(f"Column '{t[1][:40]}' is not available.")
 
     # ---- tables, aliases, CTE names
     tables, aliases, ctes, out_aliases, skip = set(), {}, set(), set(), set()      # skip = token positions that are table names / aliases
+    alias_defs = []                                                                   # every name the query invents (aliases, CTE names)
     stack = []                                           # one frame per open paren: {"from": bool, "expect": bool}
     cur = {"from": False, "expect": False}
     i = 0
@@ -144,7 +151,7 @@ def validate(sql, allow, *, max_limit=1000, star_tables=(), max_chars=8000, max_
                 if j < len(toks) and toks[j] == ("word", "as"):
                     j += 1
                 if j < len(toks) and toks[j][0] in ("word", "qid") and (toks[j][0] == "qid" or toks[j][1] not in KEYWORDS | CLAUSE_END):
-                    aliases[toks[j][1].lower()] = None; skip.add(j); i = j
+                    aliases[toks[j][1].lower()] = None; alias_defs.append(toks[j][1].lower()); skip.add(j); i = j
         elif t[0] == "word" and t[1] in ("from", "join"):
             cur["expect"] = True
             cur["from"] = True if t[1] == "from" else cur["from"]
@@ -167,15 +174,19 @@ def validate(sql, allow, *, max_limit=1000, star_tables=(), max_chars=8000, max_
             if j < len(toks) and toks[j] == ("word", "as"):
                 j += 1
             if j < len(toks) and toks[j][0] in ("word", "qid") and (toks[j][0] == "qid" or toks[j][1] not in KEYWORDS | CLAUSE_END | BANNED):
-                aliases[toks[j][1].lower()] = name; skip.add(j); j += 1
+                aliases[toks[j][1].lower()] = name; alias_defs.append(toks[j][1].lower()); skip.add(j); j += 1
             cur["expect"] = False; i = j - 1
         elif t == ("word", "as") and nxt == ("p", "(") and i >= 1 and toks[i - 1][0] == "word" and toks[i - 1][1] not in KEYWORDS:
-            ctes.add(toks[i - 1][1]); aliases[toks[i - 1][1]] = None; skip.add(i - 1)
+            ctes.add(toks[i - 1][1]); aliases[toks[i - 1][1]] = None; alias_defs.append(toks[i - 1][1].lower()); skip.add(i - 1)
         elif t == ("word", "as") and nxt and nxt[0] in ("word", "qid"):
-            out_aliases.add(nxt[1].lower())
+            out_aliases.add(nxt[1].lower()); alias_defs.append(nxt[1].lower())
         i += 1
     if not tables and not ctes:
         raise SqlRejected("Query must read from an approved table.")
+    every_col = set().union(*allow.values()) if allow else set()
+    for a in alias_defs:                                      # an invented name must never collide with a real column or table
+        if a in reserved or a in every_col or a in allow or a in forbidden:
+            raise SqlRejected(f"The alias '{a[:40]}' clashes with a column or table name: choose another alias.")
 
     # ---- functions and columns
     cols_ok = set().union(*(allow[t] for t in tables)) if tables else set()
@@ -194,6 +205,8 @@ def validate(sql, allow, *, max_limit=1000, star_tables=(), max_chars=8000, max_
             continue
         if t[0] == "word" and t[1] in KEYWORDS and t[1] not in FUNCS:
             continue
+        if t[0] == "word" and t[1] in TYPED and nxt and nxt[0] == "str":
+            continue                                           # DATE '2026-01-01'
         if t[0] == "word" and nxt == ("p", "("):
             if t[1] not in FUNCS:
                 raise SqlRejected(f"Function '{t[1][:30]}' is not allowed.")

@@ -161,12 +161,19 @@ class Server:
     # ---- transport
     def serve(self, stdin=None, stdout=None):
         stdin, stdout = stdin or sys.stdin, stdout or sys.stdout
-        for line in stdin:
+        while True:
+            line = stdin.readline(MAX_LINE_BYTES + 1)             # bounded: an endless line can never fill memory
+            if not line:
+                break
+            if len(line) > MAX_LINE_BYTES and not line.endswith("\n"):
+                while True:                                        # skip the rest of the oversize line
+                    rest = stdin.readline(65536)
+                    if not rest or rest.endswith("\n"):
+                        break
+                self._write(stdout, self._err(None, -32600, "Request too large"))
+                continue
             line = line.strip()
             if not line:
-                continue
-            if len(line.encode("utf-8", "ignore")) > MAX_LINE_BYTES:
-                self._write(stdout, self._err(None, -32600, "Request too large"))
                 continue
             try:
                 msg = json.loads(line)

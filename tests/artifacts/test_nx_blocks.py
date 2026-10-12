@@ -181,7 +181,7 @@ def test_http_refuses_private_targets_even_for_allowlisted_names(monkeypatch):
         with pytest.raises(nx_http.HttpDenied) as e:
             c.get(f"https://{host}/x")
         assert "private" in str(e.value).lower()
-    c._check("https://ok.example.com/x")                                                   # a public address passes the check
+    c._check("https://ok.example.com/x")[0]                                                   # a public address passes the check
     with pytest.raises(nx_http.HttpDenied):
         nx_http.HttpGet(["10.0.0.5"]).get("https://10.0.0.5/x")                            # IP literals are private too, unless listed explicitly
     nx_http.HttpGet(["10.0.0.5"], allow_private_hosts=["10.0.0.5"])._check("https://10.0.0.5/x")
@@ -231,3 +231,61 @@ def test_cli_json_in_json_out_exit_codes_and_selftest():
     assert run_cli(h, ["--selftest"], selftest=lambda: [("adds", True)])[0] == 0
     code, out = run_cli(h, ["--selftest"], selftest=lambda: [("adds", True), ("breaks", False)])
     assert code == 1 and out["failed"] == ["breaks"]
+
+
+# ---- review findings: redaction cannot rely on result column names; DNS pinning; MySQL charset; bounded line reads
+def test_masked_or_blocked_columns_must_not_be_queryable_through_free_sql():
+    r = nx_redact.Redactor(masked={"email": "email"}, blocked={"passport"})
+    with pytest.raises(ValueError) as e:
+        r.assert_disjoint({"customers": ["id", "email", "city"]})
+    assert "email" in str(e.value)
+    with pytest.raises(ValueError):
+        r.assert_disjoint({"customers": ["id", "PASSPORT"]})
+    r.assert_disjoint({"customers": ["id", "city"]})
+    # the leak this prevents: aliasing a masked column returns it unmasked because masking works on result names
+    assert r.apply([{"e": "jo@example.com"}]) == [{"e": "jo@example.com"}]
+
+
+def test_http_connects_to_the_address_it_checked_not_to_a_fresh_dns_answer(web, monkeypatch):
+    import socket
+    calls = {"n": 0}
+    real = socket.getaddrinfo
+    def flip(host, *a, **k):
+        if host == "pinned.example.com":
+            calls["n"] += 1
+            return [(2, 1, 6, "", ("127.0.0.1" if calls["n"] == 1 else "10.9.9.9", 0))]
+        return real(host, *a, **k)
+    monkeypatch.setattr(socket, "getaddrinfo", flip)
+    port = web.rsplit(":", 1)[1]
+    c = nx_http.HttpGet(["pinned.example.com"], allow_insecure_hosts=["pinned.example.com"], allow_private_hosts=["pinned.example.com"], timeout=3)
+    r = c.get(f"http://pinned.example.com:{port}/x")
+    assert r.status == 200 and calls["n"] == 1                                         # one resolution, and the connection used it
+
+
+def test_mysql_adapter_pins_utf8mb4(monkeypatch):
+    seen = {}
+    my = types.ModuleType("pymysql")
+    class C:
+        def cursor(self): return types.SimpleNamespace(execute=lambda *a, **k: None, close=lambda: None)
+    def connect(**kw): seen.update(kw); return C()
+    my.connect = connect
+    monkeypatch.setitem(sys.modules, "pymysql", my)
+    nx_db.connect("mysql", dsn="mysql://u:p@db.example.com:3306/x")
+    assert seen["charset"] == "utf8mb4" and seen["ssl"] is not None
+
+
+def test_mcp_never_buffers_an_unbounded_line():
+    from backend.artifacts.blocks import nx_mcp as m
+    srv = m.Server("x", "1", [m.Tool("t", "d", {"type": "object"}, lambda a: 1)])
+    huge = '{"jsonrpc":"2.0","id":1,"method":"ping","params":{"p":"' + "y" * 3_000_000 + '"}}\n'
+    ping = json.dumps({"jsonrpc": "2.0", "id": 2, "method": "ping"}) + "\n"
+    class Counting(io.StringIO):
+        biggest = 0
+        def readline(self, size=-1):
+            out = super().readline(size)
+            Counting.biggest = max(Counting.biggest, len(out))
+            return out
+    out = io.StringIO()
+    srv.serve(stdin=Counting(huge + ping), stdout=out)
+    got = [json.loads(x) for x in out.getvalue().splitlines()]
+    assert got[0]["error"]["code"] == -32600 and got[1]["id"] == 2 and Counting.biggest <= m.MAX_LINE_BYTES + 1

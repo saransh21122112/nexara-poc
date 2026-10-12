@@ -168,3 +168,39 @@ def test_random_mutations_never_get_a_dangerous_query_through():
         assert r.tables <= set(ALLOW) and re.search(r"LIMIT (\d+)( OFFSET \d+)?$", r.sql) and int(re.search(r"LIMIT (\d+)", r.sql[r.sql.upper().rfind(" LIMIT "):]).group(1)) <= 1000 and r.columns <= set().union(*map(set, ALLOW.values())), (q, r.sql)
         assert "traveler" not in body and "secrets" not in body and "passwords" not in body, (q, r.sql)
     assert accepted > 100                                                                  # the mutations are not all trivially rejected
+
+
+# ---- review findings: alias shadowing of blocked columns, forbidden names, keyword-named columns
+def test_an_alias_can_never_shadow_a_real_column_so_where_cannot_bind_to_a_blocked_one():
+    reserved = {"traveler_email", "passport_number"}                  # real columns that exist in the tables but are not readable
+    for sql in ["SELECT booking_id AS traveler_email FROM bookings WHERE traveler_email LIKE 'a%'",
+                "SELECT booking_id AS traveler_email FROM bookings",
+                "SELECT COUNT(*) AS passport_number FROM bookings GROUP BY passport_number",
+                "WITH traveler_email AS (SELECT booking_id FROM bookings) SELECT booking_id FROM traveler_email",
+                "SELECT booking_id FROM bookings traveler_email",
+                "SELECT s.booking_id FROM (SELECT booking_id FROM bookings) passport_number"]:
+        with pytest.raises(g.SqlRejected):
+            g.validate(sql, ALLOW, reserved=reserved)
+    for sql in ["SELECT nights AS status FROM bookings", "SELECT hotel_city AS bookings FROM bookings", "SELECT booking_id FROM bookings hotels"]:
+        bad(sql)                                                      # also never collide with allowed columns or table names
+    ok("SELECT COUNT(*) AS n, hotel_city FROM bookings GROUP BY hotel_city ORDER BY n DESC")
+    ok("SELECT b.booking_id FROM bookings b", )
+
+
+def test_forbidden_names_are_rejected_wherever_they_appear():
+    for sql in ["SELECT booking_id FROM bookings WHERE traveler_email = 'x'", "SELECT b.traveler_email FROM bookings b", 'SELECT "traveler_email" FROM bookings',
+                "SELECT booking_id AS traveler_email FROM bookings", "SELECT booking_id FROM bookings ORDER BY traveler_email"]:
+        with pytest.raises(g.SqlRejected):
+            g.validate(sql, ALLOW, forbidden={"traveler_email"})
+    g.validate("SELECT booking_id FROM bookings WHERE notes = 'traveler_email'", ALLOW, forbidden={"traveler_email"})        # inside a string literal it is just text
+
+
+def test_columns_named_like_sql_words_are_still_checked():
+    allow = {"events": ["id"]}
+    for col in ("date", "time", "timestamp", "row", "rows", "range", "interval", "year", "month"):
+        for sql in (f"SELECT {col} FROM events", f"SELECT id FROM events WHERE {col} = 1", f"SELECT id FROM events ORDER BY {col}"):
+            with pytest.raises(g.SqlRejected):
+                g.validate(sql, allow)
+    assert g.validate("SELECT date FROM events", {"events": ["id", "date"]}).sql.startswith("SELECT date FROM events")
+    assert g.validate("SELECT id FROM events WHERE DATE '2026-01-01' < DATE '2027-01-01' AND INTERVAL '1 day' IS NOT NULL", allow).sql
+    assert g.validate("SELECT id FROM events WHERE strftime('%Y', '2026-01-01') = '2026'", allow).sql
