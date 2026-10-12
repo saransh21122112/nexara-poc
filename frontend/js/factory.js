@@ -16,7 +16,7 @@ async function loadProv(){PROV=await api("/provider");const L={anthropic:"Anthro
  $("#prov").innerHTML=Object.entries(PROV.providers).map(([k,v])=>`<option value="${k}" ${k===PROV.current?"selected":""}>${L[k]}${v.configured?"":" - not configured"}</option>`).join("");
  const c=PROV.providers[PROV.current];$("#provnote").textContent=c.configured?c.model:"";$("#provnote").title=c.issue||""}
 $("#prov").onchange=async e=>{PROV=await api("/provider",{method:"PUT",body:JSON.stringify({provider:e.target.value})});await loadProv();if(VIEW!=="overview")render()};
-function cfgBanner(){const c=PROV.providers[PROV.current];return c.configured?"":`<div class="bad"><b>Provider not configured.</b> ${esc(c.issue)} Or switch provider in the header.</div>`}
+function cfgBanner(){const c=PROV.providers[PROV.current];const w=PROV.warning?`<div class="bad"><b>Check the AI_PROVIDER setting.</b> ${esc(PROV.warning)}</div>`:"";return w+(c.configured?"":`<div class="bad"><b>Provider not configured.</b> ${esc(c.issue)} Or switch provider in the header.</div>`)}
 const fmt=t=>t?new Date(t).toLocaleString():"";
 function countUp(root){root.querySelectorAll(".tile .n").forEach(el=>{const to=+el.textContent;if(!isFinite(to)||matchMedia("(prefers-reduced-motion:reduce)").matches)return;let t0;const f=t=>{t0??=t;const p=Math.min((t-t0)/700,1);el.textContent=Math.round(to*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(f)};requestAnimationFrame(f)})}
 async function render(){const v=$("#view");v.innerHTML='<div class="sk big"></div><div class="sk"></div><div class="sk" style="width:70%"></div>';
@@ -86,7 +86,7 @@ function showSpec(a){const el=$("#spec");if(!a){el.innerHTML="";return}const s=a
 }
 
 // ---------- delivery: preview -> explicit confirm -> private GitHub repo ----------
-const ghNote=()=>fetch("/api/health").then(r=>r.json()).then(h=>h.github_configured);
+const ghNote=()=>api("/github/status").then(g=>g.configured);
 async function showDelivery(a){const box=$("#delivery");box.innerHTML='<div class="panel"><p class="muted">Checking GitHub...</p></div>';
  let p;try{p=await api(`/agents/${a.id}/delivery-preview`)}catch(e){box.innerHTML=`<div class="panel"><div class="bad">${e.status===503?"<b>GitHub is not configured.</b> ":""}${esc(e.message)}</div></div>`;return}
  const label={create:"Create a private repository and deliver",add:"Add this agent to the customer's existing repository",update:"This agent is already in the repository: use Sync on the Customers page"}[p.mode];
