@@ -231,7 +231,7 @@ def contact(body: ContactIn, request: Request):
         raise HTTPException(429, "We are receiving a lot of messages right now. Please try again tomorrow.")
     _contact_day[1] += 1
     dbm.add_message(body.name, str(body.email), body.topic, body.message)
-    to = os.environ.get("CONTACT_EMAIL", "").strip()
+    to = pages.NOTIFY_EMAIL
     if to and mailer.mode() != "none" and _contact_day[1] <= int(os.environ.get("CONTACT_PER_DAY", "100")):
         try:
             mailer.send(to, f"[Nexara] {body.topic} from {body.name}", f"From: {body.name} <{body.email}>\nTopic: {body.topic}\n\n{body.message}\n")

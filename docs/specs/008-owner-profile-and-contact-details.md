@@ -1,40 +1,40 @@
 ---
 id: 008
-title: Owner profile and contact details on the public site
+title: Owner profile and contact details written directly into the pages
 status: implemented
 owner: saransh21122112
 ---
 
-# 008 - Owner profile and contact details
+# 008 - Owner profile and contact details (written directly in the HTML)
 
 ## Problem
-The public pages show no real person or contact route unless env vars are set, so visitors cannot tell who runs Nexara or how to reach them. The owner supplied their resume and asked for their name, email, phone, LinkedIn and GitHub to be used where it makes sense.
+Visitors cannot tell who runs Nexara or how to reach them. The owner supplied their resume and asked for their name, email, phone, LinkedIn and GitHub to appear on the site, **written directly into the HTML, with nothing to configure on Render**.
 
 ## Goals / Non-goals
-- Goal: sensible defaults for the owner's details (name, role, location, email, phone, LinkedIn, GitHub) shown on Contact, About, the footer and the legal pages; every value overridable or removable through env.
-- Goal: the About page introduces the person in outcome terms only.
-- Non-goal: copying employer names, project names, metrics or the technology stack from the resume. The public-content rule still applies.
-- Non-goal: street address; only city, state and country.
+- Goal: the owner's details are plain text in the page templates (`frontend/pages/*.html`, `frontend/layout.html`): Contact, About, footer, Privacy, Terms.
+- Goal: no environment variable controls or can change them.
+- Non-goal: copying employer names, project names, metrics or the technology stack from the resume (the public-content rule still applies). Non-goal: a street address.
+- Superseded: the env-driven `CONTACT_EMAIL` / `OWNER_*` / `CONTACT_PHONE` / `LEGAL_ADDRESS` settings from the first version of this spec and from spec 007 behaviour 3. `LEGAL_NAME`, `POLICY_EFFECTIVE`, `POLICY_REVIEWED` stay as env settings.
 
 ## Behaviour
-1. Defaults (from the resume) apply only when an env var is absent: `CONTACT_EMAIL`, `CONTACT_PHONE`, `OWNER_NAME`, `OWNER_ROLE`, `OWNER_LOCATION`, `OWNER_LINKEDIN`, `OWNER_GITHUB`. A var set to an empty string hides that item.
-2. Contact page side card: email (`mailto:`), phone (`tel:` with digits only), location, LinkedIn and GitHub (external links, `rel="noopener noreferrer"`).
-3. About page: a "Who is behind Nexara" card with name, role, one outcome-focused paragraph, location and profile links. No employer, project, framework, model or provider names.
-4. Footer on every public page: email and LinkedIn. The phone number appears only on the Contact page.
-5. Privacy and Terms say the service is run by the entity name and, when set, "operated by <owner name>", plus the location.
-6. All values are HTML-escaped; link URLs must start with `https://` or they are dropped.
+1. Contact page side card: email (`mailto:`), phone (`tel:`), location, LinkedIn and GitHub (external, `rel="noopener noreferrer"`).
+2. About page: a "Who is behind Nexara" card: name, role, location, one outcome-only paragraph, links. No employer, project, framework, model or provider names.
+3. Footer on every public page: email and LinkedIn. The phone number appears only on the Contact page.
+4. Privacy and Terms state the service is run by the entity name and "operated by Saransh Gupta", Faridabad, Haryana, India, with the email.
+5. Setting `CONTACT_EMAIL`, `CONTACT_PHONE`, `OWNER_*` or `LEGAL_ADDRESS` has no effect on any page.
+6. New contact-form messages are emailed (only when SMTP is configured) to the same address, kept as the single constant `pages.NOTIFY_EMAIL`; a test fails if that constant and the address in the HTML ever differ.
 ## Acceptance criteria
 | # | Criterion | Test |
 |---|-----------|------|
-| 1 | defaults present, env overrides, empty hides | `tests/test_pages.py::test_owner_details_defaults_override_and_hide` |
-| 2 | contact card links | `tests/test_pages.py::test_contact_page_shows_owner_card` |
-| 3 | about card, content rule | `tests/test_pages.py::test_about_introduces_the_owner_without_internals` |
-| 4 | footer and phone placement | `tests/test_pages.py::test_footer_shows_email_and_linkedin_but_phone_only_on_contact` |
-| 5 | legal pages | `tests/test_pages.py::test_legal_pages_name_the_operator` |
-| 6 | escaping and URL scheme | `tests/test_pages.py::test_owner_values_are_escaped_and_only_https_links_survive` |
+| 1 | contact card contents and link attributes | `tests/test_pages.py::test_contact_page_shows_owner_card` |
+| 2 | about card, content rule | `tests/test_pages.py::test_about_introduces_the_owner_without_internals` |
+| 3 | footer on all pages, phone only on Contact | `tests/test_pages.py::test_footer_shows_email_and_linkedin_but_phone_only_on_contact` |
+| 4 | legal pages name the operator | `tests/test_pages.py::test_legal_pages_name_the_operator` |
+| 5 | env settings are ignored | `tests/test_pages.py::test_contact_details_are_in_the_html_and_ignore_environment_settings` |
+| 6 | notify address matches the HTML | `tests/test_pages.py::test_notify_email_matches_the_html`, `tests/test_contact.py` |
 ## Edge cases considered
-Very long name or location (wraps); phone with spaces or punctuation (normalised for `tel:`); all values hidden (cards disappear cleanly, no empty boxes); a hostile env value; phone number exposed to scrapers (accepted by the owner, easy to hide with `CONTACT_PHONE=`).
+Very long name or location (wraps); phone digits normalised for `tel:` (written correctly in the HTML); a stale `CONTACT_EMAIL` still set on Render (ignored, so it cannot override the page); the number being scraped (accepted by the owner).
 ## Security / privacy / public-content check
-This publishes the owner's personal phone and email on purpose, at their request. Hide either with an empty env var. The resume's technical detail stays out of public text.
+This publishes the owner's personal phone and email on purpose, at their request. Changing or hiding them now means editing the HTML. The resume's technical detail stays out of public text.
 ## Rollout
-No migration. Set the env vars on Render only to change or hide a value.
+No migration and nothing to set on Render. Remove any `CONTACT_EMAIL` env var from Render if one exists; it is no longer read.

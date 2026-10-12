@@ -19,7 +19,7 @@ PASSWORD = "ui-test-password"
 def site(tmp_path_factory):
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
     env = {**os.environ, "NEXARA_DB": str(tmp_path_factory.mktemp("ui") / "ui.db"), "FACTORY_PASSWORD": PASSWORD, "AI_PROVIDER": "anthropic",
-           "CONTACT_MIN_SECONDS": "0", "REQUIRE_EMAIL_VERIFICATION": "false", "CONTACT_EMAIL": "hello@nexara.example", "LEGAL_NAME": "Nexara AI",
+           "CONTACT_MIN_SECONDS": "0", "REQUIRE_EMAIL_VERIFICATION": "false", "LEGAL_NAME": "Nexara AI",
            "POLICY_REVIEWED": "true"}
     for k in ("DATABASE_URL", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):
         env.pop(k, None)

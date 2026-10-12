@@ -53,23 +53,18 @@ def test_unknown_page_is_a_styled_404_and_api_stays_json(client):
     assert j.status_code == 404 and j.headers["content-type"].startswith("application/json")
 
 
-def test_legal_values_come_from_env_and_unset_values_render_nothing(client, monkeypatch):
-    for k in ("LEGAL_NAME", "LEGAL_ADDRESS", "POLICY_EFFECTIVE", "POLICY_REVIEWED"):
+def test_legal_wording_comes_from_env_and_unset_values_render_nothing(client, monkeypatch):
+    for k in ("LEGAL_NAME", "POLICY_EFFECTIVE", "POLICY_REVIEWED"):
         monkeypatch.delenv(k, raising=False)
-    for k in ("CONTACT_EMAIL", "CONTACT_PHONE", "OWNER_NAME", "OWNER_ROLE", "OWNER_LOCATION", "OWNER_LINKEDIN", "OWNER_GITHUB"):
-        monkeypatch.setenv(k, "")                       # empty hides the built-in owner defaults
     bare = client.get("/privacy").text
-    assert "pending legal review" in bare and "mailto:" not in bare and "None" not in bare
+    assert "pending legal review" in bare and "None" not in bare and "{{" not in bare and "Effective:" not in bare
     monkeypatch.setenv("LEGAL_NAME", "Nexara Labs <b>Pvt</b>")
-    monkeypatch.setenv("CONTACT_EMAIL", "hello@nexara.example")
-    monkeypatch.setenv("LEGAL_ADDRESS", "1 Example Street")
     monkeypatch.setenv("POLICY_EFFECTIVE", "1 November 2026")
     monkeypatch.setenv("POLICY_REVIEWED", "true")
     full = client.get("/privacy").text
     assert "Nexara Labs &lt;b&gt;Pvt&lt;/b&gt;" in full and "<b>Pvt</b>" not in full                # escaped
-    assert "mailto:hello@nexara.example" in full and "1 Example Street" in full and "1 November 2026" in full
-    assert "pending legal review" not in full
-    assert "hello@nexara.example" in client.get("/contact").text and "Nexara Labs" in client.get("/terms").text
+    assert "1 November 2026" in full and "pending legal review" not in full
+    assert "Nexara Labs" in client.get("/terms").text
 
 
 def test_public_pages_do_not_leak_internals(client):
@@ -106,68 +101,56 @@ def test_fonts_are_self_hosted(client):
     assert "fonts.googleapis.com" not in h and "fonts.gstatic.com" not in h
 
 
-# ---- spec 008: owner profile and contact details
-OWNER_ENV = ("CONTACT_EMAIL", "CONTACT_PHONE", "OWNER_NAME", "OWNER_ROLE", "OWNER_LOCATION", "OWNER_LINKEDIN", "OWNER_GITHUB")
+# ---- spec 008: the owner's details are written directly in the HTML
+EMAIL, PHONE_TEL, LINKEDIN, GITHUB = "saranshgupta2112@gmail.com", "tel:+917291812344", "https://www.linkedin.com/in/saransh-Gupta21", "https://github.com/saransh21122112"
+OWNER_ENV = ("CONTACT_EMAIL", "CONTACT_PHONE", "OWNER_NAME", "OWNER_ROLE", "OWNER_LOCATION", "OWNER_LINKEDIN", "OWNER_GITHUB", "LEGAL_ADDRESS")
 
 
-def _clear(monkeypatch):
-    for k in OWNER_ENV:
-        monkeypatch.delenv(k, raising=False)
-
-
-def test_owner_details_defaults_override_and_hide(client, monkeypatch):
-    _clear(monkeypatch)
+def test_contact_page_shows_owner_card(client):
     c = client.get("/contact").text
-    for needle in ("saranshgupta2112@gmail.com", "tel:+917291812344", "+91 72918 12344", "Faridabad, Haryana, India",
-                   "https://www.linkedin.com/in/saransh-Gupta21", "https://github.com/saransh21122112"):
+    assert 'class="owner-card"' in c and "Saransh Gupta" in c and "Faridabad, Haryana, India" in c
+    for needle in (f"mailto:{EMAIL}", PHONE_TEL, "+91 72918 12344", f'href="{LINKEDIN}"', f'href="{GITHUB}"'):
         assert needle in c, needle
-    monkeypatch.setenv("CONTACT_PHONE", "+44 20 7946 0000"); monkeypatch.setenv("CONTACT_EMAIL", "team@nexara.example")
-    c = client.get("/contact").text
-    assert "tel:+442079460000" in c and "team@nexara.example" in c and "saranshgupta2112" not in c and "72918" not in c
-    for k in OWNER_ENV:
-        monkeypatch.setenv(k, "")
-    c = client.get("/contact").text
-    assert "tel:" not in c and "mailto:" not in c and "linkedin" not in c.lower() and "owner-card" not in c   # nothing left: no empty boxes
+    assert c.count('rel="noopener noreferrer"') >= 2
 
 
-def test_contact_page_shows_owner_card(client, monkeypatch):
-    _clear(monkeypatch)
-    c = client.get("/contact").text
-    assert 'class="owner-card"' in c and "Saransh Gupta" in c
-    assert c.count('rel="noopener noreferrer"') >= 2 and 'href="https://github.com/saransh21122112"' in c
-
-
-def test_about_introduces_the_owner_without_internals(client, monkeypatch):
-    _clear(monkeypatch)
-    h = client.get("/about").text
-    t = text_of(h)
+def test_about_introduces_the_owner_without_internals(client):
+    t = text_of(client.get("/about").text)
     assert "who is behind nexara" in t and "saransh gupta" in t and "ai engineer" in t and "faridabad" in t
     for bad in DENY + ["hrs", "bedrock", "langchain", "qdrant", "booking.com", "foundry", "arcface", "lambda"]:
         assert bad not in t, bad
 
 
-def test_footer_shows_email_and_linkedin_but_phone_only_on_contact(client, monkeypatch):
-    _clear(monkeypatch)
+def test_footer_shows_email_and_linkedin_but_phone_only_on_contact(client):
     for path in PUBLIC:
         h = client.get(path).text
         foot = h[h.index("<footer"):]
-        assert "mailto:saranshgupta2112@gmail.com" in foot and "linkedin.com/in/saransh-Gupta21" in foot, path
+        assert f"mailto:{EMAIL}" in foot and "linkedin.com/in/saransh-Gupta21" in foot, path
         if path != "/contact":
             assert "72918" not in h and "tel:" not in h, path
 
 
-def test_legal_pages_name_the_operator(client, monkeypatch):
-    _clear(monkeypatch)
+def test_legal_pages_name_the_operator(client):
     for p in ("/privacy", "/terms"):
-        t = text_of(client.get(p).text)
-        assert "operated by saransh gupta" in t and "faridabad, haryana, india" in t, p
-
-
-def test_owner_values_are_escaped_and_only_https_links_survive(client, monkeypatch):
-    _clear(monkeypatch)
-    monkeypatch.setenv("OWNER_NAME", "<script>x</script> Sam"); monkeypatch.setenv("OWNER_LOCATION", "A" * 200 + " & <b>")
-    monkeypatch.setenv("OWNER_LINKEDIN", "javascript:alert(1)"); monkeypatch.setenv("OWNER_GITHUB", "http://insecure.example/x")
-    for p in ("/about", "/contact", "/privacy"):
         h = client.get(p).text
-        assert "<script>x</script>" not in h and "&lt;script&gt;x&lt;/script&gt; Sam" in h
-        assert "javascript:" not in h and "insecure.example" not in h
+        t = text_of(h)
+        assert "operated by saransh gupta" in t and "faridabad, haryana, india" in t and f"mailto:{EMAIL}" in h, p
+
+
+def test_contact_details_are_in_the_html_and_ignore_environment_settings(client, monkeypatch):
+    before = {p: client.get(p).text for p in ("/contact", "/about", "/privacy", "/terms", "/")}
+    for k in OWNER_ENV:
+        monkeypatch.setenv(k, "<script>x</script>@evil.example")
+    for p, h in before.items():
+        assert client.get(p).text == h, f"{p} changed when env settings were set"
+        assert "evil.example" not in client.get(p).text
+    for k in OWNER_ENV:
+        monkeypatch.setenv(k, "")
+    assert f"mailto:{EMAIL}" in client.get("/contact").text and "72918" in client.get("/contact").text
+    from backend import pages
+    assert not hasattr(pages, "OWNER_DEFAULTS")
+
+
+def test_notify_email_matches_the_html(client):
+    from backend import pages
+    assert pages.NOTIFY_EMAIL == EMAIL and f"mailto:{pages.NOTIFY_EMAIL}" in client.get("/contact").text

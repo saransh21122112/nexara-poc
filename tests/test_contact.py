@@ -1,7 +1,7 @@
 """Spec 007 behaviour 5: the public contact form."""
 import pytest
 
-from backend import database as dbm, mailer
+from backend import database as dbm, mailer, pages
 
 OK = dict(name="Jo Reader", email="jo@example.com", topic="General", message="Hello, I would like to talk about a skill for my team.")
 
@@ -75,7 +75,7 @@ def test_a_flood_never_blocks_real_messages_it_only_stops_operator_emails(client
     sent = []
     monkeypatch.setattr(mailer, "send", lambda to, subject, text, html=None: sent.append(1) or "smtp")
     monkeypatch.setattr(mailer, "mode", lambda: "smtp")
-    monkeypatch.setenv("CONTACT_EMAIL", "ops@nexara.example")
+    monkeypatch.setattr(pages, "NOTIFY_EMAIL", "ops@nexara.example")
     monkeypatch.setenv("CONTACT_PER_DAY", "2")
     monkeypatch.setenv("CONTACT_PER_HOUR_PER_IP", "50")
     main._contact_day[:] = [0, 0]
@@ -102,7 +102,7 @@ def test_html_is_stored_as_plain_data_never_interpreted(client):
 def test_operator_is_emailed_only_when_mail_is_configured(client, monkeypatch):
     sent = []
     monkeypatch.setattr(mailer, "send", lambda to, subject, text, html=None: sent.append((to, subject, text)) or "smtp")
-    monkeypatch.setenv("CONTACT_EMAIL", "ops@nexara.example")
+    monkeypatch.setattr(pages, "NOTIFY_EMAIL", "ops@nexara.example")
     monkeypatch.setattr(mailer, "mode", lambda: "smtp")
     send(client)
     assert len(sent) == 1 and sent[0][0] == "ops@nexara.example" and "jo@example.com" in sent[0][2]
@@ -116,5 +116,5 @@ def test_a_mail_failure_never_fails_the_visitor(client, monkeypatch):
         raise mailer.MailError("down")
     monkeypatch.setattr(mailer, "send", boom)
     monkeypatch.setattr(mailer, "mode", lambda: "smtp")
-    monkeypatch.setenv("CONTACT_EMAIL", "ops@nexara.example")
+    monkeypatch.setattr(pages, "NOTIFY_EMAIL", "ops@nexara.example")
     assert send(client).status_code == 201 and len(client.get("/api/messages").json()) == 1

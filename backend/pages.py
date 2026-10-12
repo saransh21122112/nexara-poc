@@ -34,57 +34,15 @@ def _e(v: str) -> str:
     return html.escape(v or "", quote=True)
 
 
-# Owner details come from the owner's resume (spec 008). They apply only when the env var is absent; an empty value hides the item.
-OWNER_DEFAULTS = {"CONTACT_EMAIL": "saranshgupta2112@gmail.com", "CONTACT_PHONE": "+91 72918 12344", "OWNER_NAME": "Saransh Gupta", "OWNER_ROLE": "AI Engineer",
-                  "OWNER_LOCATION": "Faridabad, Haryana, India", "OWNER_LINKEDIN": "https://www.linkedin.com/in/saransh-Gupta21",
-                  "OWNER_GITHUB": "https://github.com/saransh21122112"}
-
-
-def _val(key: str) -> str:
-    return (os.environ[key] if key in os.environ else OWNER_DEFAULTS.get(key, "")).strip()
-
-
-def _https(url: str) -> str:
-    return url if url.startswith("https://") else ""        # never emit javascript:, http: or relative links from config
+# The owner's contact details are written directly into frontend/pages/*.html and frontend/layout.html (spec 008): nothing here or in the
+# environment can change them. The one Python copy is the address contact-form notifications go to; a test keeps it equal to the HTML.
+NOTIFY_EMAIL = "saranshgupta2112@gmail.com"
 
 
 def cfg() -> dict:
     env = os.environ.get
-    phone = _val("CONTACT_PHONE")
-    return {"email": _val("CONTACT_EMAIL"), "name": (env("LEGAL_NAME") or "").strip(), "address": (env("LEGAL_ADDRESS") or "").strip() or _val("OWNER_LOCATION"),
-            "effective": (env("POLICY_EFFECTIVE") or "").strip(), "reviewed": (env("POLICY_REVIEWED") or "").strip().lower() == "true",
-            "phone": phone, "tel": ("+" if phone.startswith("+") else "") + re.sub(r"\D", "", phone), "owner": _val("OWNER_NAME"), "role": _val("OWNER_ROLE"),
-            "location": _val("OWNER_LOCATION"), "linkedin": _https(_val("OWNER_LINKEDIN")), "github": _https(_val("OWNER_GITHUB"))}
-
-
-def _links(c: dict) -> str:
-    out = []
-    if c["linkedin"]:
-        out.append('<a href="%s" target="_blank" rel="noopener noreferrer">LinkedIn</a>' % _e(c["linkedin"]))
-    if c["github"]:
-        out.append('<a href="%s" target="_blank" rel="noopener noreferrer">GitHub</a>' % _e(c["github"]))
-    return " &middot; ".join(out)
-
-
-def _owner_card(c: dict, about: bool) -> str:
-    """The person behind Nexara. Outcome language only: no employer, project, framework or provider names (content rule)."""
-    if not (c["owner"] or c["email"] or c["phone"] or c["linkedin"] or c["github"]):
-        return ""
-    who = "<h3>%s</h3>" % _e(c["owner"]) if c["owner"] else ""
-    sub = " &middot; ".join(x for x in (_e(c["role"]), _e(c["location"])) if x)
-    role = '<p class="muted">%s</p>' % sub if sub else ""
-    bio = ("<p>An AI engineer with more than two years of experience building production generative-AI systems for large enterprises, from assistants that "
-           "answer questions over company data to recommendation engines that save real money. Nexara brings that same production discipline to businesses of any size.</p>") if about else ""
-    rows = []
-    if c["email"]:
-        rows.append('<p><strong>Email</strong><br><a href="mailto:%s">%s</a></p>' % (_e(c["email"]), _e(c["email"])))
-    if c["phone"] and not about:
-        rows.append('<p><strong>Phone</strong><br><a href="tel:%s">%s</a></p>' % (_e(c["tel"]), _e(c["phone"])))
-    if c["location"] and not about:
-        rows.append("<p><strong>Based in</strong><br>%s</p>" % _e(c["location"]))
-    if _links(c):
-        rows.append("<p><strong>Elsewhere</strong><br>%s</p>" % _links(c))
-    return '<div class="owner-card">%s%s%s%s</div>' % (who, role, bio, "".join(rows))
+    return {"name": (env("LEGAL_NAME") or "").strip(), "effective": (env("POLICY_EFFECTIVE") or "").strip(),
+            "reviewed": (env("POLICY_REVIEWED") or "").strip().lower() == "true"}
 
 
 def base_url(request) -> str:
@@ -109,17 +67,10 @@ def _fragment(name: str) -> str:
 
 
 def _tokens(c: dict) -> dict:
-    mail = f'<a href="mailto:{_e(c["email"])}">{_e(c["email"])}</a>' if c["email"] else ""
     return {
         "ENTITY": _e(c["name"]) or "Nexara AI",
-        "OPERATOR_INLINE": ", operated by " + _e(c["owner"]) if c["owner"] else "",
-        "OWNER_ABOUT": ('<section class="s" style="padding-top:8px"><span class="eyebrow">The person</span><h2>Who is behind Nexara</h2>' + _owner_card(c, True) + "</section>") if _owner_card(c, True) else "",
-        "ADDRESS_INLINE": f", {_e(c['address'])}" if c["address"] else "",
-        "CONTACT_SENTENCE": (f'You can reach us at {mail} or through our <a href="/contact">contact page</a>.' if mail else 'You can reach us through our <a href="/contact">contact page</a>.'),
-        "CONTACT_SENTENCE_SHORT": (f'Write to {mail} or use our <a href="/contact">contact page</a>.' if mail else 'Use our <a href="/contact">contact page</a>.'),
         "DRAFT_NOTE": "" if c["reviewed"] else '<p class="note">This text is a draft pending legal review.</p>',
         "EFFECTIVE_LINE": f"<p><strong>Effective:</strong> {_e(c['effective'])}</p>" if c["effective"] else "",
-        "CONTACT_SIDE": _owner_card(c, False),
     }
 
 
@@ -140,13 +91,10 @@ def render(path: str, request, status_page: str | None = None) -> str:
     def link(p, label):
         return f'<a href="{p}"' + (' aria-current="page"' if p == cur else "") + f">{label}</a>"
     nav = "".join(link(p, l) for p, l in NAV)
-    extra = (('<a href="mailto:%s">%s</a>' % (_e(c["email"]), _e(c["email"])) if c["email"] else "")
-             + ('<a href="%s" target="_blank" rel="noopener noreferrer">LinkedIn</a>' % _e(c["linkedin"]) if c["linkedin"] else "")
-             + ("<span>%s</span>" % _e(c["address"]) if c["address"] else ""))
     out = LAYOUT
     for k, v in {"TITLE": _e(title), "DESC": _e(desc), "CANON": _e(canon), "ROBOTS": "index,follow" if indexed else "noindex,nofollow",
                  "SPRITE": sprite(), "NAV": nav, "SHEET": nav, "BODY": body, "YEAR": str(datetime.now(timezone.utc).year),
-                 "ENTITY": tok["ENTITY"], "FOOT_EXTRA": extra,
+                 "ENTITY": tok["ENTITY"],
                  "SCRIPTS": "".join(f'<script src="/js/{s}"></script>' for s in scripts)}.items():
         out = out.replace("{{" + k + "}}", v)
     return out
