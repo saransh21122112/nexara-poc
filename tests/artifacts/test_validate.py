@@ -69,12 +69,47 @@ ESCAPES = {
     "top-level side effect call": "import json\njson.dumps({})\ndef handle(args, ctx):\n    return 1",
     "top-level loop": "for i in range(10):\n    pass\ndef handle(args, ctx):\n    return 1",
     "class def with exec": "class A:\n    x = exec('1')\ndef handle(args, ctx):\n    return 1",
+    # ---- reaching banned capabilities through ALLOWED modules (review finding)
+    "io.open is the builtin open": "import io\ndef handle(args, ctx):\n    return io.open('/etc/passwd').read()",
+    "io.FileIO": "import io\ndef handle(args, ctx):\n    return io.FileIO('/etc/passwd').read()",
+    "module hop statistics.sys": "import statistics\ndef handle(args, ctx):\n    return statistics.sys.modules['os'].listdir('/')",
+    "module hop json.codecs": "import json\ndef handle(args, ctx):\n    return json.codecs.open('/etc/passwd').read()",
+    "module hop csv.os": "import csv\ndef handle(args, ctx):\n    return csv.os.listdir('/')",
+    "private attr collections._sys": "import collections\ndef handle(args, ctx):\n    return collections._sys.modules",
+    "from json import codecs": "from json import codecs\ndef handle(args, ctx):\n    return codecs.open('/etc/passwd')",
+    "from csv import io": "from csv import io\ndef handle(args, ctx):\n    return io.open('/etc/passwd')",
+    "from collections import _sys": "from collections import _sys\ndef handle(args, ctx):\n    return _sys",
+    "operator.attrgetter dunder by string": "import operator\ndef handle(args, ctx):\n    return operator.attrgetter('__globals__')(handle)",
+    "operator.methodcaller": "import operator\ndef handle(args, ctx):\n    return operator.methodcaller('__reduce__')(args)",
+    "string.Formatter attribute walk": "import string\ndef handle(args, ctx):\n    return string.Formatter().format('{0.__class__}', args)",
+    "dotted import of a submodule": "import json.tool\ndef handle(args, ctx):\n    return 1",
+    "dataclasses.inspect": "import dataclasses\ndef handle(args, ctx):\n    return dataclasses.inspect.currentframe()",
+    "typing.sys": "import typing\ndef handle(args, ctx):\n    return typing.sys.argv",
+    "functools.types": "import functools\ndef handle(args, ctx):\n    return functools.types",
+    "importlib via attribute": "import json\ndef handle(args, ctx):\n    return json.importlib",
+    "frame walking": "import json\ndef handle(args, ctx):\n    return handle.currentframe",
+    "any single-underscore attribute": "def handle(args, ctx):\n    return args._private",
+    "decorator calling banned": "def deco(f):\n    return f\n@deco\n@open\ndef handle(args, ctx):\n    return 1",
 }
 
 
 @pytest.mark.parametrize("name", list(ESCAPES))
 def test_every_escape_attempt_is_rejected(name):
     assert problems(ESCAPES[name]), f"accepted: {name}"
+
+
+def test_safe_everyday_code_is_still_accepted_after_the_hardening():
+    src = ("import json, csv, re, math\nfrom io import StringIO\nfrom collections import Counter, defaultdict\nfrom datetime import datetime, timezone\n"
+           "from decimal import Decimal\nfrom statistics import mean\nimport itertools, functools, operator\n"
+           "def handle(args, ctx):\n"
+           "    rows = list(csv.DictReader(StringIO(args['csv'])))\n"
+           "    c = Counter(r['a'] for r in rows)\n"
+           "    total = sum(Decimal(r['b']) for r in rows)\n"
+           "    items = sorted(c.items(), key=operator.itemgetter(1), reverse=True)\n"
+           "    lst = [1, 2, 3]; lst.remove(2)\n"
+           "    return {'n': len(rows), 'avg': mean([1, 2]), 'total': str(total), 'top': items[:1], 'msg': f'{len(rows)} rows', 'ts': datetime.now(timezone.utc).isoformat(), 'lst': lst,\n"
+           "            'chain': list(itertools.chain([1], [2])), 'p': functools.reduce(operator.add, [1, 2]), 'j': json.dumps({'a': 1}), 'm': math.floor(2.5), 'r': bool(re.search('a', 'a'))}\n")
+    assert problems(src) == []
 
 
 def test_missing_or_wrong_handler_signature_and_syntax_errors():

@@ -16,6 +16,17 @@ class Result(NamedTuple):
     truncated: bool
 
 
+import re as _re
+
+_IDENT = _re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def _ident(name):
+    if not isinstance(name, str) or not _IDENT.fullmatch(name):
+        raise DbError("Invalid table name.")
+    return name
+
+
 class _SqliteDb:
     def __init__(self, path, timeout_s, max_rows):
         import os
@@ -24,6 +35,11 @@ class _SqliteDb:
         self.conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
         self.conn.execute("PRAGMA query_only=ON")
         self.timeout_s, self.max_rows = timeout_s, max_rows
+
+    def columns(self, table):
+        """Every real column name of `table` (readable or not): the SQL guard uses it so an alias can never shadow one."""
+        rows = self.conn.execute(f"PRAGMA table_info({_ident(table)})").fetchall()
+        return [r[1] for r in rows]
 
     def query(self, sql, params=()):
         deadline = time.monotonic() + self.timeout_s
@@ -60,6 +76,10 @@ class _PgDb:
             raise DbError("Could not connect to the database.") from None
         self.max_rows = max_rows
 
+    def columns(self, table):
+        r = self.query("SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position", (_ident(table),))
+        return [row["column_name"] for row in r.rows]
+
     def query(self, sql, params=()):
         try:
             cur = self.conn.cursor()
@@ -91,6 +111,10 @@ class _MyDb:
         except Exception:                            # noqa: BLE001
             raise DbError("Could not connect to the database.") from None
         self.max_rows = max_rows
+
+    def columns(self, table):
+        r = self.query("SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position", (_ident(table),))
+        return [row.get("column_name") or row.get("COLUMN_NAME") for row in r.rows]
 
     def query(self, sql, params=()):
         try:

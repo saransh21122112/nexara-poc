@@ -10,7 +10,14 @@ difflib heapq bisect operator hashlib base64 html zoneinfo __future__""".split()
 PACKAGES = {"psycopg[binary]", "pymysql"}
 BANNED_NAMES = set("""eval exec compile __import__ open input breakpoint globals locals vars getattr setattr delattr type exit quit print __builtins__ __loader__
 __spec__ help memoryview""".split())
-BANNED_ATTRS = {"format", "format_map", "mro", "f_globals", "f_locals", "f_back", "gi_frame", "cr_frame", "tb_frame", "func_globals"}
+# Allowed stdlib modules expose OTHER modules and file openers as attributes (statistics.sys, json.codecs, io.open, ...), and a few helpers reach dunder
+# attributes through strings (operator.attrgetter, string.Formatter). Those names are banned wherever they appear, and so is every underscore attribute.
+BANNED_ATTRS = {"format", "format_map", "mro", "f_globals", "f_locals", "f_back", "gi_frame", "cr_frame", "tb_frame", "func_globals",
+                "open", "FileIO", "open_code", "popen", "system", "attrgetter", "methodcaller", "Formatter", "vformat", "get_field", "modules", "meta_path",
+                "path_hooks", "path_importer_cache", "import_module", "find_spec", "reload", "currentframe", "stack", "getframe", "get_type_hints",
+                "sys", "os", "subprocess", "builtins", "importlib", "ctypes", "codecs", "pickle", "marshal", "shutil", "socket", "ssl", "inspect", "gc",
+                "threading", "signal", "runpy", "code", "tempfile", "glob", "types", "pathlib", "posixpath", "ntpath", "genericpath", "io", "ast", "weakref",
+                "multiprocessing", "asyncio", "selectors", "select", "mmap", "fcntl", "resource", "pty", "tty", "termios", "readline", "zipimport", "pkgutil"}
 MAX_SOURCE, MAX_LINES, MAX_TOTAL = 60_000, 400, 400_000
 SLUG = re.compile(r"[a-z][a-z0-9]*(-[a-z0-9]+)*")
 TOOL = re.compile(r"[a-z][a-z0-9_]{0,39}")
@@ -54,16 +61,19 @@ def check_source(src, entry="handle", min_args=1, max_args=2):
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
-                if a.name not in NX_MODULES and a.name.split(".")[0] not in STD and a.name != "urllib.parse":
+                if a.name not in NX_MODULES and a.name not in STD and a.name != "urllib.parse":     # exact names only: no submodules like json.tool
                     add(node, f"import of '{a.name}' is not allowed")
         elif isinstance(node, ast.ImportFrom):
             m = node.module or ""
             if node.level:
                 add(node, "relative imports are not allowed")
-            elif m not in NX_MODULES and m.split(".")[0] not in STD and m != "urllib.parse":
+            elif m not in NX_MODULES and m not in STD and m != "urllib.parse":
                 add(node, f"import from '{m}' is not allowed")
             if any(a.name == "*" for a in node.names):
                 add(node, "star imports are not allowed")
+            for a in node.names:
+                if a.name in BANNED_ATTRS or a.name.startswith("_") and m != "__future__":
+                    add(node, f"importing '{a.name}' is not allowed")
         elif isinstance(node, ast.AsyncFunctionDef):
             add(node, "async functions are not allowed")
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
@@ -71,8 +81,8 @@ def check_source(src, entry="handle", min_args=1, max_args=2):
         elif isinstance(node, ast.Name) and node.id in BANNED_NAMES:
             add(node, f"'{node.id}' is not allowed")
         elif isinstance(node, ast.Attribute):
-            if node.attr.startswith("__") and node.attr.endswith("__"):
-                add(node, "dunder attribute access is not allowed")
+            if node.attr.startswith("_"):
+                add(node, "attributes starting with an underscore are not allowed")
             elif node.attr in BANNED_ATTRS:
                 add(node, f"attribute '{node.attr}' is not allowed")
         elif isinstance(node, ast.FunctionDef) and node.end_lineno and node.end_lineno - node.lineno > MAX_LINES:

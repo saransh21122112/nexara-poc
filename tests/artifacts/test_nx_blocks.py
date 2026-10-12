@@ -289,3 +289,13 @@ def test_mcp_never_buffers_an_unbounded_line():
     srv.serve(stdin=Counting(huge + ping), stdout=out)
     got = [json.loads(x) for x in out.getvalue().splitlines()]
     assert got[0]["error"]["code"] == -32600 and got[1]["id"] == 2 and Counting.biggest <= m.MAX_LINE_BYTES + 1
+
+
+def test_db_introspection_lists_every_real_column_including_unreadable_ones(tmp_path):
+    p = tmp_path / "c.db"
+    c = sqlite3.connect(p); c.execute("create table bookings (id integer, city text, traveler_email text)"); c.commit(); c.close()
+    db = nx_db.connect("sqlite", path=str(p))
+    assert db.columns("bookings") == ["id", "city", "traveler_email"]
+    with pytest.raises(nx_db.DbError):
+        db.columns("bookings; DROP TABLE bookings")                         # table names are validated, never concatenated blindly
+    assert db.columns("no_such_table") == []
