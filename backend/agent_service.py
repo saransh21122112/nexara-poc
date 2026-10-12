@@ -181,7 +181,7 @@ async def assist_form(a: AssistIn) -> dict:
     """Return only the form boxes the model set/changed. Raises NotConfigured / UpstreamError; callers show a friendly note."""
     p = providers.get_provider()
     if (why := providers.missing(p)):
-        raise NotConfigured(f"The assistant is not available right now ({why}). You can fill the form in by hand.")
+        raise NotConfigured("The assistant is not available right now. You can fill the form in by hand.")   # public text: never say why (config detail)
     prompt = _assist_prompt(a)
     try:
         if p == "claude_subscription":
@@ -195,7 +195,7 @@ async def assist_form(a: AssistIn) -> dict:
     except NotConfigured:
         raise
     except Exception as e:
-        raise UpstreamError(f"The assistant is busy ({type(e).__name__}). Try again in a moment.")
+        raise UpstreamError("The assistant is busy. Try again in a moment, or fill the form in by hand.")
     out = {k: v.strip() if isinstance(v, str) else v for k, v in out.items() if k in ASSIST_FIELDS}
     if a.field:
         out = {k: v for k, v in out.items() if k == a.field}

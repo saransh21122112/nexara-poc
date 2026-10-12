@@ -134,7 +134,7 @@ async def no_cache_static(request, call_next):
 
 @app.api_route("/api/health", methods=["GET", "HEAD"])
 def health():
-    return {"status": "ok", "agent_types": AGENT_TYPES, "github_configured": get_github().configured, **providers.status()}
+    return {"status": "ok"}      # public: no provider, model, key or integration status here (that is staff-only: /api/provider, /api/github/status)
 
 
 @app.post("/api/factory/login")

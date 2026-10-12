@@ -87,3 +87,15 @@ async def test_agent_loop_real_client(prov):
     assert out["tool_calls"][0]["tool"] == "calculator" and out["tool_calls"][0]["ok"]
     assert out["tool_calls"][0]["result"]["result"] == 5
     assert out["input_tokens"] == 22 and out["output_tokens"] == 14  # two model turns
+
+
+def test_an_invalid_ai_provider_value_is_reported_to_staff_not_silently_ignored(monkeypatch):
+    from backend import providers
+    providers._current = None
+    monkeypatch.setenv("AI_PROVIDER", "CLAUDE_CODE_OAUTH_TOKEN")        # a real mistake: the token's name pasted as the value
+    s = providers.status()
+    assert s["current"] == "anthropic" and "AI_PROVIDER" in s["warning"] and "claude_subscription" in s["warning"]
+    monkeypatch.setenv("AI_PROVIDER", "claude_subscription")
+    assert providers.status()["warning"] is None and providers.get_provider() == "claude_subscription"
+    monkeypatch.delenv("AI_PROVIDER", raising=False)
+    assert providers.status()["warning"] is None

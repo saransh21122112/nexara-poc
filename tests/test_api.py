@@ -14,7 +14,7 @@ SPEC = dict(agent_name="Sales Analyst", purpose="Analyse sales", business_proble
 
 
 def test_health_and_auth(client):
-    assert client.get("/api/health").json()["providers"]["anthropic"]["configured"] is False
+    assert client.get("/api/provider").json()["providers"]["anthropic"]["configured"] is False      # configuration is staff-only
     client.headers.pop("X-Factory-Token")
     assert client.get("/api/requests").status_code == 401
     assert client.post("/api/factory/login", json={"password": "bad"}).status_code == 401
@@ -248,4 +248,35 @@ def test_request_kinds_and_legacy_rows(client):
     rid = dbm.create_request({"company_name": "Old", "industry": "x", "agent_type": "Sales", "business_problem": "long enough text", "tasks": "do things",
                               "existing_tools": "x", "required_output": "y", "contact_email": "o@old.example", "github_username": "old-dev"})
     assert client.get(f"/api/requests/{rid['id']}").json()["agent_type"] == "Sales"                              # old stored value still shows
-    assert "MCP server" in client.get("/api/health").json()["agent_types"]
+    from backend.models import AGENT_TYPES
+    assert "MCP server" in AGENT_TYPES
+
+
+
+# ---- public endpoints never reveal configuration (spec 007 behaviour 13)
+LEAK_WORDS = ("anthropic", "openai", "api_key", ".env", "restart the server", "oauth", "token", "claude_subscription", "docker", "github_token", "smtp")
+
+
+def test_public_health_is_just_ok(client):
+    r = client.get("/api/health")
+    assert r.status_code == 200 and r.json() == {"status": "ok"}
+
+
+def test_assist_unavailable_message_reveals_no_configuration(client):
+    r = client.post("/api/requests/assist", json={"description": "We need a skill that summarises our support tickets."})
+    assert r.status_code == 503
+    msg = r.json()["detail"].lower()
+    assert "by hand" in msg
+    for w in LEAK_WORDS:
+        assert w not in msg, f"public message reveals '{w}': {msg}"
+
+
+def test_assist_upstream_failures_reveal_no_internals(client, monkeypatch):
+    from backend import providers, subscription
+    async def boom(system, prompt):
+        raise RuntimeError("sk-ant-secret connection refused to internal-host:8443")
+    monkeypatch.setattr(subscription, "complete_json", boom)
+    monkeypatch.setattr(providers, "missing", lambda p: None)
+    monkeypatch.setattr(providers, "get_provider", lambda: "claude_subscription")
+    r = client.post("/api/requests/assist", json={"description": "We need a skill that summarises our support tickets."})
+    assert r.status_code == 502 and "sk-ant" not in r.text and "internal-host" not in r.text and "RuntimeError" not in r.text

@@ -59,8 +59,15 @@ def missing(p: str) -> str | None:
     return None
 
 
+def env_warning() -> str | None:
+    v = os.environ.get("AI_PROVIDER")
+    if v and v not in PROVIDERS:
+        return f"AI_PROVIDER is set to '{v}', which is not a provider, so 'anthropic' is used. Set it to one of: {', '.join(PROVIDERS)}."
+    return None
+
+
 def status() -> dict:
-    return {"current": get_provider(), "providers": {
+    return {"current": get_provider(), "warning": env_warning(), "providers": {
         p: {"configured": missing(p) is None, "model": model_name(p), "issue": missing(p)} for p in PROVIDERS}}
 
 

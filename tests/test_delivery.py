@@ -222,7 +222,7 @@ def test_github_not_configured_is_a_clear_503(env, monkeypatch):
         assert resp.status_code == 503 and resp.json()["code"] == "not_configured" and "GITHUB_TOKEN" in resp.json()["detail"]
     assert repo_of(env, cid) is None
     assert env.client.get("/api/github/status").json()["configured"] is False
-    assert env.client.get("/api/health").json()["github_configured"] is False
+    assert env.client.get("/api/github/status").json()["configured"] is False
 
 
 def test_partial_failure_leaves_needs_retry_and_retry_does_not_duplicate(env):
