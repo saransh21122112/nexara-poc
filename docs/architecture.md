@@ -100,7 +100,7 @@ flowchart LR
   user([Visitors and staff]) --> render
 ```
 - One container, started by `Dockerfile`; `PORT` from the platform; `/api/health` is the health check.
-- Env vars (see `.env.example`, `render.yaml`): `FACTORY_PASSWORD`, `AI_PROVIDER` plus a provider key or `CLAUDE_CODE_OAUTH_TOKEN`, `DATABASE_URL`, `GITHUB_TOKEN`, `GITHUB_OWNER`, `SMTP_*`, `REQUIRE_EMAIL_VERIFICATION`, `TRUSTED_PROXY_HOPS`, rate-limit knobs, and the legal/contact settings (`CONTACT_EMAIL`, `LEGAL_NAME`, `LEGAL_ADDRESS`, `POLICY_EFFECTIVE`, `POLICY_REVIEWED`).
+- Env vars (see `.env.example`, `render.yaml`): `FACTORY_PASSWORD`, `AI_PROVIDER` plus a provider key or `CLAUDE_CODE_OAUTH_TOKEN`, `DATABASE_URL`, `GITHUB_TOKEN`, `GITHUB_OWNER`, `SMTP_*`, `REQUIRE_EMAIL_VERIFICATION`, `TRUSTED_PROXY_HOPS`, rate-limit knobs, and the legal/contact settings (`LEGAL_NAME`, `POLICY_EFFECTIVE`, `POLICY_REVIEWED`).
 - Restarts interrupt a running build; startup marks it interrupted so the UI never spins forever.
 - API docs (`/docs`) are disabled when `RENDER` is set.
 

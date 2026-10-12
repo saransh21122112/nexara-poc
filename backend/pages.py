@@ -34,10 +34,15 @@ def _e(v: str) -> str:
     return html.escape(v or "", quote=True)
 
 
+# The owner's contact details are written directly into frontend/pages/*.html and frontend/layout.html (spec 008): nothing here or in the
+# environment can change them. The one Python copy is the address contact-form notifications go to; a test keeps it equal to the HTML.
+NOTIFY_EMAIL = "saranshgupta2112@gmail.com"
+
+
 def cfg() -> dict:
     env = os.environ.get
-    return {"email": (env("CONTACT_EMAIL") or "").strip(), "name": (env("LEGAL_NAME") or "").strip(), "address": (env("LEGAL_ADDRESS") or "").strip(),
-            "effective": (env("POLICY_EFFECTIVE") or "").strip(), "reviewed": (env("POLICY_REVIEWED") or "").strip().lower() == "true"}
+    return {"name": (env("LEGAL_NAME") or "").strip(), "effective": (env("POLICY_EFFECTIVE") or "").strip(),
+            "reviewed": (env("POLICY_REVIEWED") or "").strip().lower() == "true"}
 
 
 def base_url(request) -> str:
@@ -62,15 +67,10 @@ def _fragment(name: str) -> str:
 
 
 def _tokens(c: dict) -> dict:
-    mail = f'<a href="mailto:{_e(c["email"])}">{_e(c["email"])}</a>' if c["email"] else ""
     return {
         "ENTITY": _e(c["name"]) or "Nexara AI",
-        "ADDRESS_INLINE": f", {_e(c['address'])}" if c["address"] else "",
-        "CONTACT_SENTENCE": (f'You can reach us at {mail} or through our <a href="/contact">contact page</a>.' if mail else 'You can reach us through our <a href="/contact">contact page</a>.'),
-        "CONTACT_SENTENCE_SHORT": (f'Write to {mail} or use our <a href="/contact">contact page</a>.' if mail else 'Use our <a href="/contact">contact page</a>.'),
         "DRAFT_NOTE": "" if c["reviewed"] else '<p class="note">This text is a draft pending legal review.</p>',
         "EFFECTIVE_LINE": f"<p><strong>Effective:</strong> {_e(c['effective'])}</p>" if c["effective"] else "",
-        "CONTACT_SIDE": (f"<p>Email: {mail}</p>" if mail else "") + (f"<p>{_e(c['address'])}</p>" if c["address"] else ""),
     }
 
 
@@ -91,11 +91,10 @@ def render(path: str, request, status_page: str | None = None) -> str:
     def link(p, label):
         return f'<a href="{p}"' + (' aria-current="page"' if p == cur else "") + f">{label}</a>"
     nav = "".join(link(p, l) for p, l in NAV)
-    extra = (f'<a href="mailto:{_e(c["email"])}">{_e(c["email"])}</a>' if c["email"] else "") + (f"<span>{_e(c['address'])}</span>" if c["address"] else "")
     out = LAYOUT
     for k, v in {"TITLE": _e(title), "DESC": _e(desc), "CANON": _e(canon), "ROBOTS": "index,follow" if indexed else "noindex,nofollow",
                  "SPRITE": sprite(), "NAV": nav, "SHEET": nav, "BODY": body, "YEAR": str(datetime.now(timezone.utc).year),
-                 "ENTITY": tok["ENTITY"], "FOOT_EXTRA": extra,
+                 "ENTITY": tok["ENTITY"],
                  "SCRIPTS": "".join(f'<script src="/js/{s}"></script>' for s in scripts)}.items():
         out = out.replace("{{" + k + "}}", v)
     return out

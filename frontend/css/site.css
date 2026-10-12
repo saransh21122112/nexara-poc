@@ -184,3 +184,11 @@ html:not(.js) .nav{flex-wrap:wrap;padding-bottom:6px}html:not(.js) .links{displa
 @media(min-width:960px){.js .menu-btn{display:none}}
 /* card and step titles are h2 on content pages (heading order); keep them card-sized, not section-sized */
 section.s .card h2{font-size:1.2rem;margin:0}section.s .step h2{font-size:1.1rem;margin:0 0 6px}
+
+/* owner card: contact side panel (dark) and about page (light) */
+.owner-card h3{font-size:1.25rem;margin:0}.owner-card p{margin:.5em 0}.owner-card strong{font:500 11.5px var(--f-mono);letter-spacing:.12em;text-transform:uppercase;opacity:.85}
+.owner-card a{overflow-wrap:anywhere}.side .owner-card h3{color:#fff}.side .owner-card .muted{color:#e5d5ad}
+section.s>.owner-card{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:22px;box-shadow:var(--shadow);max-width:640px}
+section.s>.owner-card a{color:var(--m1);text-decoration:underline;text-underline-offset:3px}
+.fine{align-items:center}.fine a{margin-right:4px}
+.side h2{margin:0 0 12px}

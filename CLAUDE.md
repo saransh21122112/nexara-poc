@@ -25,7 +25,7 @@ Typos, dependency bumps and test-only changes may skip the spec with a `No-spec:
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp .env.example .env                      # set FACTORY_PASSWORD, a provider, optional GITHUB_*, SMTP_*
 .venv/bin/uvicorn backend.main:app --reload --port 8000    # site at /, staff dashboard at /factory
-.venv/bin/python -m pytest -q tests -m "not ui"              # backend tests, SQLite (default)
+.venv/bin/python -m pytest -q tests                        # backend tests, SQLite (default; browser tests are opt-in)
 .venv/bin/python -m playwright install chromium            # once, for the browser tests
 .venv/bin/python -m pytest -q tests -m ui                  # frontend tests: real browser, phone/desktop, accessibility
 TEST_DATABASE_URL=postgresql://user:pass@localhost:5433/db .venv/bin/python -m pytest -q tests   # Postgres

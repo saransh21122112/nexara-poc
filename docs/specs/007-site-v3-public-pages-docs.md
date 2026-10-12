@@ -24,7 +24,7 @@ owner: saransh21122112
 ## Behaviour (the contract)
 1. Public routes `/about /what-we-do /how-we-work /security /faq /contact /privacy /terms` render server-side inside one shared layout (header, footer, meta tags). `/`, `/request`, `/verify`, `/track` use the same layout. Unknown paths return a styled 404.
 2. `GET /sitemap.xml` lists public pages only; `GET /robots.txt` disallows `/factory /track /verify /api`; private pages carry `noindex`.
-3. Legal/contact details come from env (`CONTACT_EMAIL`, `LEGAL_NAME`, `LEGAL_ADDRESS`, `POLICY_EFFECTIVE`, `POLICY_REVIEWED`). Unset values render nothing; until `POLICY_REVIEWED=true` the legal pages show a "draft pending legal review" note.
+3. Legal wording is configured by `LEGAL_NAME`, `POLICY_EFFECTIVE` and `POLICY_REVIEWED` (unset values render nothing; until `POLICY_REVIEWED=true` the legal pages show a "draft pending legal review" note). The owner's contact details are written directly into the HTML (see spec 008).
 4. Public text never contains internals (deny-list in tests).
 5. `POST /api/contact` validates name, email, topic, message (length-capped), rejects honeypot or too-fast submissions with a generic success, limits per IP (default 5/hour) stores the message (hard cap 2000/day as a flood guard, so real visitors are not locked out), and emails the operator only when SMTP is configured and only for the first 100 messages a day. The anti-bot ticket is signed with a random per-process key that is not derived from any password. `GET /api/messages` and `POST /api/messages/{id}/read` are factory-only.
 6. Page scrollbar is hidden on public pages with a thin reading-progress line instead; inner scroll areas and the factory use thin themed scrollbars.
