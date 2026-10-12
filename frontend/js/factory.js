@@ -4,7 +4,7 @@ let TOKEN=sessionStorage.getItem("ft"),VIEW="overview",SEL={req:null,agent:null,
 async function api(path,opt={}){const r=await fetch("/api"+path,{...opt,headers:{"Content-Type":"application/json","X-Factory-Token":TOKEN||"",...(opt.headers||{})}});
  if(r.status===401&&path!=="/factory/login"){logout();throw new Error("Session expired")}
  if(opt.blob&&r.ok)return r.blob();const j=await r.json().catch(()=>({}));
- if(!r.ok){const d=j.detail;throw Object.assign(new Error(Array.isArray(d)?d.map(x=>x.loc.slice(1).join(".")+": "+x.msg).join("; "):d||"Request failed"),{status:r.status,body:j})}return j}
+ if(!r.ok){const d=j.detail;throw Object.assign(new Error(Array.isArray(d)?d.map(x=>x.loc.slice(1).join(".")+": "+x.msg).join("; "):d||`Request failed (HTTP ${r.status}).${r.status>=500?" The server may be restarting or hit an error: wait a minute and try again, and check the server log if it keeps happening.":""}`),{status:r.status,body:j})}return j}
 function logout(){sessionStorage.removeItem("ft");TOKEN=null;$("#app").hidden=true;$("#login").hidden=false}
 $("#lf").onsubmit=async e=>{e.preventDefault();$("#lerr").hidden=true;try{const j=await api("/factory/login",{method:"POST",body:JSON.stringify({password:$("#pw").value})});$("#lerr").textContent="";TOKEN=j.token;sessionStorage.setItem("ft",TOKEN);start()}catch(x){$("#lerr").textContent=x.message;$("#lerr").hidden=false}};
 $("#signout").onclick=logout;

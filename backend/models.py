@@ -97,12 +97,19 @@ class GenerateTestsIn(BaseModel):
     focus: str = Field(default="", max_length=300)
 
 
+class AddScenariosIn(BaseModel):
+    scenarios: list["TestScenario"] = Field(min_length=1, max_length=10)
+
+
 class TestScenario(BaseModel):
     name: str
     task: str
     expected_behavior: str
     must_contain: list[str] = []
     must_call_tool: str | None = None
+
+
+AddScenariosIn.model_rebuild()
 
 
 class AgentSpec(BaseModel):

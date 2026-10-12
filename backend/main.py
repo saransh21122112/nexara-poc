@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from . import agent_service, build_service, pages, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
 from .github_client import GitHubClient, GitHubError, NotConfigured as GitHubNotConfigured  # noqa: E402
-from .models import (AGENT_TYPES, AgentSpec, AssistIn, AttachIn, ContactIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
+from .models import (AGENT_TYPES, AgentSpec, AddScenariosIn, AssistIn, AttachIn, ContactIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
                      GenerateTestsIn, ManualVerifyIn, ProviderIn, RequestIn, ReviseIn, RunIn, SyncIn, VerifyIn)
 from .providers import NotConfigured, UpstreamError  # noqa: E402
 
@@ -411,6 +411,24 @@ async def generate_tests(agent_id: str, body: GenerateTestsIn):
     a = _agent_or_404(agent_id)
     scenarios, provider, model = await agent_service.generate_tests(a["spec"], body.count, body.focus)
     return {"scenarios": scenarios, "provider": provider, "model": model}
+
+
+MAX_SCENARIOS = 20
+
+
+@app.post("/api/agents/{agent_id}/test-scenarios", dependencies=[Depends(factory_auth)])
+def add_test_scenarios(agent_id: str, body: AddScenariosIn):
+    """Append accepted test cases (from generate-tests) to the stored spec. Only the new cases travel; the rest of the spec is untouched."""
+    a = _agent_or_404(agent_id)
+    spec = a["spec"]
+    have = {(t["name"], t["task"]) for t in spec.get("test_scenarios", [])}
+    fresh = [t.model_dump() for t in body.scenarios if (t.name, t.task) not in have]
+    if len(spec.get("test_scenarios", [])) + len(fresh) > MAX_SCENARIOS:
+        raise HTTPException(409, f"A build keeps at most {MAX_SCENARIOS} test cases. Remove some before adding more.")
+    if fresh:
+        spec = {**spec, "test_scenarios": [*spec.get("test_scenarios", []), *fresh]}
+        return dbm.update_agent_spec(agent_id, spec)
+    return a
 
 
 @app.post("/api/agents/{agent_id}/run", dependencies=[Depends(factory_auth)])

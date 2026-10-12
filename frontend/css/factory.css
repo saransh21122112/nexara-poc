@@ -132,3 +132,6 @@ html.fac{scrollbar-width:none;-ms-overflow-style:none}html.fac::-webkit-scrollba
 #app label.case{text-transform:none;letter-spacing:0;font-size:14px;font-weight:400;color:var(--text);margin:8px 0 0}
 #app label.case small{font-size:13px;font-weight:400}
 .logo b{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--g2)}
+/* chips hold sentences (capabilities, scenario names): they wrap inside their container. Short status tags elsewhere stay on one line. */
+.chips .tag,.specard .tag{white-space:normal;overflow-wrap:anywhere;max-width:100%;line-height:1.4;padding:5px 12px;border-radius:14px;margin-right:0}
+.specard,.specard .chips{min-width:0;max-width:100%}
