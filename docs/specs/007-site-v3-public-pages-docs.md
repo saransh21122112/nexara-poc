@@ -22,7 +22,7 @@ owner: saransh21122112
 - Non-goal: CMS/blog, analytics or cookie banner, CAPTCHA, dark theme, translations, pricing page, publishing docs on the site.
 
 ## Behaviour (the contract)
-1. Public routes `/about /what-we-do /how-we-work /security /faq /contact /privacy /terms` render server-side inside one shared layout (header, footer, meta tags). `/`, `/request`, `/verify`, `/track` use the same layout. Unknown paths return a styled 404.
+1. Public routes `/about /what-we-do /how-we-work /security /faq /contact /privacy /terms` render server-side inside one shared layout (header, footer, meta tags). `/`, `/request`, `/verify`, `/track` use the same layout. Unknown paths return a styled 404. Every page, `/factory`, `sitemap.xml` and `robots.txt` also answer `HEAD` (hosting health probes use `HEAD /`).
 2. `GET /sitemap.xml` lists public pages only; `GET /robots.txt` disallows `/factory /track /verify /api`; private pages carry `noindex`.
 3. Legal wording is configured by `LEGAL_NAME`, `POLICY_EFFECTIVE` and `POLICY_REVIEWED` (unset values render nothing; until `POLICY_REVIEWED=true` the legal pages show a "draft pending legal review" note). The owner's contact details are written directly into the HTML (see spec 008).
 4. Public text never contains internals (deny-list in tests).
@@ -38,7 +38,7 @@ owner: saransh21122112
 ## Acceptance criteria
 | # | Criterion | Test |
 |---|-----------|------|
-| 1-2 | pages, sitemap, robots, noindex, 404 | `tests/test_pages.py` |
+| 1-2 | pages, sitemap, robots, noindex, 404, HEAD requests | `tests/test_pages.py` (incl. `test_head_requests_work_on_every_page_because_hosting_health_probes_use_them`) |
 | 3 | config-driven legal values and draft note | `tests/test_pages.py::test_legal_*` |
 | 4 | deny-list scan of every public page | `tests/test_pages.py::test_public_pages_do_not_leak_internals` |
 | 5 | contact validation, limits, storage, auth | `tests/test_contact.py` |

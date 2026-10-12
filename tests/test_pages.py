@@ -154,3 +154,12 @@ def test_contact_details_are_in_the_html_and_ignore_environment_settings(client,
 def test_notify_email_matches_the_html(client):
     from backend import pages
     assert pages.NOTIFY_EMAIL == EMAIL and f"mailto:{pages.NOTIFY_EMAIL}" in client.get("/contact").text
+
+
+def test_head_requests_work_on_every_page_because_hosting_health_probes_use_them(client):
+    """Regression: Render probes `HEAD /`; a GET-only route answered 405 and the deploy was stopped."""
+    for path in PUBLIC + PRIVATE + ["/sitemap.xml", "/robots.txt", "/api/health"]:
+        r = client.head(path)
+        assert r.status_code == 200, f"HEAD {path} -> {r.status_code}"
+        assert r.text == "" and "content-security-policy" in r.headers
+    assert client.head("/definitely-not-here").status_code == 404

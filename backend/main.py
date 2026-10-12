@@ -132,7 +132,7 @@ async def no_cache_static(request, call_next):
     return resp
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health():
     return {"status": "ok", "agent_types": AGENT_TYPES, "github_configured": get_github().configured, **providers.status()}
 
@@ -528,7 +528,7 @@ def stats():
     return dbm.stats()
 
 
-@app.get("/factory")
+@app.api_route("/factory", methods=["GET", "HEAD"])
 def factory_page():
     return FileResponse(FRONTEND / "factory.html")
 
@@ -540,15 +540,15 @@ def _page_route(path):
 
 
 for _p in pages.PAGES:
-    app.add_api_route(_p, _page_route(_p), methods=["GET"], include_in_schema=False)
+    app.add_api_route(_p, _page_route(_p), methods=["GET", "HEAD"], include_in_schema=False)   # hosting health probes send HEAD
 
 
-@app.get("/sitemap.xml", include_in_schema=False)
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"], include_in_schema=False)
 def sitemap_xml(request: Request):
     return Response(pages.sitemap(request), media_type="application/xml")
 
 
-@app.get("/robots.txt", include_in_schema=False)
+@app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
 def robots_txt(request: Request):
     return PlainTextResponse(pages.robots(request))
 
