@@ -54,6 +54,24 @@ def _agent_ctx(agent_id: str):
     return agent, request, ensure_customer(request)
 
 
+def code_status(agent: dict) -> dict:
+    """Does this agent ship code (tool scripts / MCP servers), and have its checks passed for exactly this spec?"""
+    spec = agent["spec"]
+    has_code = bool(spec.get("scripts") or spec.get("mcp_servers"))
+    c = agent.get("checks") or {}
+    return {"has_code": has_code, "verified": bool(c.get("verified")) if has_code else True, "ran_code": bool(c.get("ran_code")), "reason": c.get("reason", "") if has_code else ""}
+
+
+def require_code_ack(agent_ids: list[str], ack: bool) -> None:
+    """Code nobody has run is only delivered when a person says so explicitly."""
+    if ack:
+        return
+    names = [a["spec"]["agent_name"] for a in map(dbm.get_agent, agent_ids) if a and (st := code_status(a))["has_code"] and not st["verified"]]
+    if names:
+        raise DeliveryError("This delivery contains code whose checks have not passed on this host: " + ", ".join(names)
+                            + ". Run the checks first, or acknowledge that a person reviewed the code (unverified_code_ack=true).", 409)
+
+
 def invitee(customer: dict, request: dict, repo_exists: bool) -> tuple[str | None, str | None]:
     """(username to invite, reason it is blocked). Only an identity already established for the customer is trusted: the
     request form is public, so a username typed into a request never gets write access to an existing repo on its own."""
@@ -165,6 +183,9 @@ def preview(gh: GitHubClient, agent_id: str, support_email: str = "") -> dict:
     if not request.get("email_verified") and not verification_required():
         warnings.append("Email verification is switched OFF (REQUIRE_EMAIL_VERIFICATION=false): nobody has confirmed that "
                         f"{request.get('contact_email')} belongs to the requester. Check this request really comes from this customer.")
+    code = code_status(agent)
+    if code["has_code"] and not code["verified"]:
+        warnings.append("This contains code that has not been run and checked here" + (f" ({code['reason']})" if code["reason"] else "") + ". Review the Artifact panel before delivering.")
     if blocked:
         warnings.append(blocked)
     if repo and (request.get("contact_email") or "").lower() != (customer.get("contact_email") or "").lower():
@@ -191,6 +212,7 @@ def preview(gh: GitHubClient, agent_id: str, support_email: str = "") -> dict:
         "invite": {"username": user, "blocked_reason": blocked, "will_invite": bool(user) and not invited_already, "access": "write (GitHub gives collaborators on personal-account repos write access)"},
         "onboarding_draft": onboarding_draft(customer, url, owner, name, entries),
         "warnings": warnings,
+        "code": code,
         "blocked": [unverified] if unverified else [],
         "email_verified": bool(request.get("email_verified")),
     }
@@ -301,8 +323,9 @@ def _propose(gh, customer, repo, entries, message_lines, plan, msg, executable, 
 
 # ---------------------------------------------------------------- deliver
 def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: bool = False, support_email: str = "",
-            existing_repo_ack: bool = False, overwrite_dev: bool = False) -> dict:
+            existing_repo_ack: bool = False, overwrite_dev: bool = False, unverified_code_ack: bool = False) -> dict:
     agent, request, customer = _agent_ctx(agent_id)
+    require_code_ack([agent_id], unverified_code_ack)
     if reason := unverified_reason(request):
         raise DeliveryError(reason + " Nothing was created.", 409)
     with _lock(customer["id"]):
@@ -374,12 +397,13 @@ def behind(entries: list[dict]) -> list[dict]:
     return [e for e in entries if e["synced_hash"] != repo_gen.spec_hash(e["spec"])]
 
 
-def sync(gh: GitHubClient, customer_id: str, overwrite: bool = False, support_email: str = "", overwrite_dev: bool = False) -> dict:
+def sync(gh: GitHubClient, customer_id: str, overwrite: bool = False, support_email: str = "", overwrite_dev: bool = False, unverified_code_ack: bool = False) -> dict:
     """Propose the current specs as an update: branch `dev` + pull request into `main` (nothing is merged by us)."""
     cust, repo = _customer_repo(customer_id)
     with _lock(customer_id):
         entries = _entries(repo)
         changed_agents = behind(entries)
+        require_code_ack([e["agent_id"] for e in changed_agents], unverified_code_ack)
         lines = [f"Updated agent: {e['spec']['agent_name']} (/{e['slug']})" for e in changed_agents] or ["Re-synced repository files"]
         try:
             result = _push(gh, cust, repo, entries, lines, overwrite, support_email, via_pr=bool(dbm.list_repo_agents(repo["id"])), overwrite_dev=overwrite_dev)

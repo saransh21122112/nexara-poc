@@ -1,3 +1,4 @@
+import asyncio
 import collections
 import hmac
 import os
@@ -16,6 +17,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 from . import agent_service, build_service, pages, database as dbm, delivery_service, mailer, providers, verification  # noqa: E402
+from . import repo_gen  # noqa: E402
+from .artifacts import checks as code_checks, materialize, sandbox  # noqa: E402
 from .github_client import GitHubClient, GitHubError, NotConfigured as GitHubNotConfigured  # noqa: E402
 from .models import (AGENT_TYPES, AgentSpec, AssistIn, AttachIn, ContactIn, CollaboratorIn, ConfirmIn, DeliverIn, LoginIn, NoteIn, OnboardingIn,  # noqa: E402
                      GenerateTestsIn, ManualVerifyIn, ProviderIn, RequestIn, ReviseIn, RunIn, SyncIn, VerifyIn)
@@ -423,6 +426,33 @@ async def evaluate_agent(agent_id: str):
     return await agent_service.evaluate(_agent_or_404(agent_id))
 
 
+# ---- real deliverables: what the files are and whether the code was checked
+def _plugin_for(agent: dict) -> str:
+    return repo_gen.company_slug(delivery_service.ensure_customer(dbm.get_request(agent["request_id"]))["slug"])
+
+
+@app.get("/api/agents/{agent_id}/artifact", dependencies=[Depends(factory_auth)])
+def agent_artifact(agent_id: str):
+    a = _agent_or_404(agent_id)
+    structured = materialize.is_structured(a["spec"])
+    files = []
+    if structured:
+        for path, content in sorted(materialize.assemble([a["spec"]], _plugin_for(a)).items()):
+            vetted = path.startswith("lib/")
+            files.append({"path": path, "bytes": len(content.encode()), "kind": "vetted" if vetted else "code" if path.endswith((".py", ".json")) else "doc",
+                          "content": None if vetted else content})
+    return {"structured": structured, "files": files, "checks": a.get("checks"), "run_enabled": sandbox.enabled()}
+
+
+@app.post("/api/agents/{agent_id}/run-checks", dependencies=[Depends(factory_auth)])
+async def run_checks(agent_id: str):
+    a = _agent_or_404(agent_id)
+    limit("checks", "factory", 20, 60, "code checks")
+    report = await asyncio.to_thread(code_checks.run_checks, a["spec"], _plugin_for(a))
+    dbm.save_checks(agent_id, report if report.get("applicable") else None)
+    return report
+
+
 # ---- delivery: one private GitHub repo per customer (see delivery_service) ----
 SUPPORT_EMAIL = lambda: os.environ.get("SUPPORT_EMAIL", "")
 
@@ -443,7 +473,8 @@ def deliver(agent_id: str, body: DeliverIn):
     _agent_or_404(agent_id)
     _confirmed(body.confirm, "create/update the customer's private GitHub repository" + (" and invite them as a collaborator" if body.invite else ""))
     limit("gh", "factory", 20, 60, "delivery actions")
-    return delivery_service.deliver(get_github(), agent_id, invite=body.invite, support_email=SUPPORT_EMAIL(), existing_repo_ack=body.existing_repo_ack, overwrite_dev=body.overwrite_dev)
+    return delivery_service.deliver(get_github(), agent_id, invite=body.invite, support_email=SUPPORT_EMAIL(), existing_repo_ack=body.existing_repo_ack, overwrite_dev=body.overwrite_dev,
+                                    unverified_code_ack=body.unverified_code_ack)
 
 
 @app.post("/api/requests/{request_id}/attach-customer", dependencies=[Depends(factory_auth)])
@@ -495,7 +526,7 @@ def customer_sync(customer_id: str, body: SyncIn):
     _confirmed(body.confirm, "put the latest versions on the repository's dev branch and open a pull request into main (nothing is merged)")
     limit("gh", "factory", 20, 60, "delivery actions")
     return delivery_service.sync(get_github(), customer_id, overwrite=body.overwrite_conflicts, support_email=SUPPORT_EMAIL(),
-                                 overwrite_dev=body.overwrite_dev)
+                                 overwrite_dev=body.overwrite_dev, unverified_code_ack=body.unverified_code_ack)
 
 
 @app.get("/api/customers/{customer_id}/diff", dependencies=[Depends(factory_auth)])

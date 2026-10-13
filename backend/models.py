@@ -238,6 +238,7 @@ class DeliverIn(BaseModel):
     invite: bool = True
     existing_repo_ack: bool = False   # required when the agent is added to a repo that already exists
     overwrite_dev: bool = False
+    unverified_code_ack: bool = False   # required when the delivery contains code whose checks have not passed
 
 
 class AttachIn(BaseModel):
@@ -249,6 +250,7 @@ class SyncIn(BaseModel):
     confirm: bool = False
     overwrite_conflicts: bool = False
     overwrite_dev: bool = False       # replace commits on the repo's dev branch that Nexara did not make
+    unverified_code_ack: bool = False
 
 
 class ReviseIn(BaseModel):
