@@ -21,7 +21,7 @@ def _expect(text, is_error, ex):
     if ex.get("expect_error"):
         if not is_error:
             return False, "expected an error, got success"
-        if ex["expect_error"].lower() not in low:
+        if ex["expect_error"] != "*" and ex["expect_error"].lower() not in low:       # "*" = any refusal will do
             return False, f"error did not mention {ex['expect_error']!r}: {text[:200]}"
     elif is_error:
         return False, f"unexpected error: {text[:200]}"

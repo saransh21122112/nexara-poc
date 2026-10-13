@@ -38,6 +38,7 @@ def test_skill_only_layout():
     text = f["skills/ticket-triage/SKILL.md"]
     assert text.startswith("---\nname: ticket-triage\n") and 'argument-hint: "paste the customer message"' in text and "allowed-tools: Read, Grep, Glob" in text
     assert "## Guardrails" in text and "Never change data." in text and "$ARGUMENTS" in text
+    assert "## References" in text and "`references/categories.md`" in text
 
 
 def test_tool_layout_and_wrapper_skill():

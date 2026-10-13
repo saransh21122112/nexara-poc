@@ -120,7 +120,9 @@ def skill_files(spec: dict, plugin: str) -> dict[str, str]:
         tools = list(dict.fromkeys([*base, *used]))
         fm = _front(name=s["name"], description=">-" + _desc(s["description"], 1000), **{"argument-hint": json.dumps(s["argument_hint"]) if s.get("argument_hint") else None},
                     **{"allowed-tools": ", ".join(tools) if tools else None})
-        body = s["body"].strip() + "\n\n" + (section + "\n" if section else "") + (f"## Guardrails\n{guard}\n" if guard else "")
+        refs = "".join(f"- `references/{r['name']}.md`\n" for r in s.get("references", []))
+        refs = f"## References\nRead the relevant file with the Read tool when you need it (paths are relative to this skill's folder):\n{refs}\n" if refs else ""
+        body = s["body"].strip() + "\n\n" + refs + (section + "\n" if section else "") + (f"## Guardrails\n{guard}\n" if guard else "")
         out[f"skills/{s['name']}/SKILL.md"] = fm + body
         for r in s.get("references", []):
             out[f"skills/{s['name']}/references/{r['name']}.md"] = r["content"].strip() + "\n"

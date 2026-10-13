@@ -15,7 +15,7 @@ Always still fill the general fields (agent_name, purpose, business_problem, ins
 
 SKILL (`skills[]`): a skill does the job itself, it is NOT a forwarder to another agent. Fields: name (lower-case-hyphenated), description (what it does AND when to use
 it, with trigger phrases a user would say, max 1000 chars), argument_hint, body (markdown: numbered workflow, exact output format, edge cases, what to refuse),
-references[] (name + content: domain rules, templates, a worked example; loaded on demand), allowed_tools (only Read/Grep/Glob), uses[] (names of scripts,
+references[] (name + content: domain rules, templates, a worked example; loaded on demand; Nexara lists them in the skill as references/<name>.md, so mention them by that path), allowed_tools (only Read/Grep/Glob), uses[] (names of scripts,
 servers or "server/tool" in THIS spec that the skill needs). The body must be specific to the customer's domain and examples, never generic filler.
 
 TOOL (`scripts[]`): a real Python 3 standard-library program. Fields: name, description, inputs (documented JSON shape), blocks, handler_source, examples[].
