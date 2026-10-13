@@ -117,6 +117,10 @@ def init_db():
                 c.execute(f"ALTER TABLE repos ADD COLUMN IF NOT EXISTS {col} {typ}")
             elif col not in [r[1] for r in c.execute("PRAGMA table_info(repos)").fetchall()]:
                 c.execute(f"ALTER TABLE repos ADD COLUMN {col} {typ}")
+        if database_url():
+            c.execute("ALTER TABLE agents ADD COLUMN IF NOT EXISTS checks TEXT")
+        elif "checks" not in [r[1] for r in c.execute("PRAGMA table_info(agents)").fetchall()]:
+            c.execute("ALTER TABLE agents ADD COLUMN checks TEXT")
 
 
 def _j(row, *json_cols):
@@ -300,7 +304,7 @@ def list_requests():
 def create_agent(request_id: str, spec: dict, provider: str, model: str) -> dict:
     aid = new_id("AGT")
     with db() as c:
-        c.execute("INSERT INTO agents VALUES (?,?,?,?,?,?,?)",
+        c.execute("INSERT INTO agents (id, request_id, created_at, updated_at, provider, model, spec) VALUES (?,?,?,?,?,?,?)",
                   (aid, request_id, now(), now(), provider, model, json.dumps(spec)))
     return get_agent(aid)
 
@@ -310,7 +314,7 @@ def get_agent(aid: str):
         row = c.execute("SELECT * FROM agents WHERE id=?", (aid,)).fetchone()
         if not row:
             return None
-        d = _j(row, "spec")
+        d = _j(row, "spec", "checks")
         d["tested"] = c.execute("SELECT COUNT(*) FROM runs WHERE agent_id=?", (aid,)).fetchone()[0] > 0 or \
             c.execute("SELECT COUNT(*) FROM eval_runs WHERE agent_id=?", (aid,)).fetchone()[0] > 0
         ev = c.execute("SELECT * FROM eval_runs WHERE agent_id=? ORDER BY created_at DESC LIMIT 1", (aid,)).fetchone()
@@ -328,8 +332,13 @@ def list_agents(request_id: str | None = None):
 
 def update_agent_spec(aid: str, spec: dict):
     with db() as c:
-        c.execute("UPDATE agents SET spec=?, updated_at=? WHERE id=?", (json.dumps(spec), now(), aid))
+        c.execute("UPDATE agents SET spec=?, checks=NULL, updated_at=? WHERE id=?", (json.dumps(spec), now(), aid))
     return get_agent(aid)
+
+
+def save_checks(aid: str, report: dict | None) -> None:
+    with db() as c:
+        c.execute("UPDATE agents SET checks=? WHERE id=?", (json.dumps(report) if report is not None else None, aid))
 
 
 def save_run(agent_id: str, kind: str, task: str, provider: str, model: str, status: str, response: str,

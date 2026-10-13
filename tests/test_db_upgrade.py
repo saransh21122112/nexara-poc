@@ -27,3 +27,22 @@ def test_existing_repos_table_gains_layout_and_legacy_without_losing_rows(tmp_pa
     dbm.set_repo_legacy(repo["id"], ["old-a", "old-a", "old-b"])
     again = dbm.get_repo_for_customer("CUS-1")
     assert again["layout"] == 3 and again["legacy"] == ["old-a", "old-b"]
+
+
+def test_agents_table_gains_checks_and_a_spec_change_clears_the_old_report(tmp_path, monkeypatch):
+    db = tmp_path / "old2.db"
+    monkeypatch.setenv("NEXARA_DB", str(db))
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE requests (id TEXT PRIMARY KEY)")
+    con.execute("CREATE TABLE agents (id TEXT PRIMARY KEY, request_id TEXT, created_at TEXT, updated_at TEXT, provider TEXT, model TEXT, spec TEXT)")
+    con.execute("INSERT INTO agents VALUES ('AGT-1','REQ-1','2026-01-01','2026-01-01','p','m','{\"agent_name\": \"x\"}')")
+    con.commit()
+    con.close()
+    dbm.init_db()
+    dbm.init_db()
+    assert dbm.get_agent("AGT-1")["checks"] is None
+    dbm.save_checks("AGT-1", {"verified": True, "checks": []})
+    assert dbm.get_agent("AGT-1")["checks"]["verified"] is True
+    dbm.update_agent_spec("AGT-1", {"agent_name": "changed"})
+    assert dbm.get_agent("AGT-1")["checks"] is None           # a report describes one exact spec; editing it makes the report stale

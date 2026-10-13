@@ -115,7 +115,7 @@ def test_invalid_model_output_is_502_and_nothing_saved(client, monkeypatch):
     client.put("/api/provider", json={"provider": "claude_subscription"})
     rid = client.post("/api/requests", json=REQ).json()["request_id"]
     r = client.post(f"/api/requests/{rid}/generate-agent")
-    assert r.status_code == 502 and len(calls) == 2  # one retry, then give up
+    assert r.status_code == 502 and len(calls) == 3  # two repair retries (the code gate reports what to change), then give up
     assert client.get("/api/agents").json() == []
 
 

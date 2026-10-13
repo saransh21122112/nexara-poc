@@ -123,3 +123,65 @@ def test_tracker_before_any_build_and_rate_limit(client, monkeypatch):
     monkeypatch.setenv("TRACK_PER_HOUR_PER_IP", "2")
     codes = [client.get(f"/api/track/{rid}").status_code for _ in range(3)]
     assert codes[-1] == 429
+
+
+# ---- structured deliverables: the code checks are a real part of the pipeline
+def _structured(spec_fn):
+    from tests.artifacts import golden
+    return spec_fn(golden)
+
+
+def test_code_checks_are_skipped_honestly_when_the_switch_is_off(client, monkeypatch):
+    monkeypatch.delenv("NEXARA_RUN_GENERATED_CODE", raising=False)
+    from backend.models import AgentSpec
+    spec = AgentSpec(**_structured(lambda g: g.tool_only())).model_dump()
+    rid = _setup(client, monkeypatch, spec=spec)
+    client.post(f"/api/requests/{rid}/build")
+    b = _wait(client, rid)
+    assert b["status"] == "ready"
+    first = b["stages"]["test"]["progress"][0]["detail"]
+    assert first["name"] == "Code checks" and first["skipped"] is True and "NEXARA_RUN_GENERATED_CODE" in first["reason"]
+    agent = dbm.get_agent(client.get(f"/api/requests/{rid}").json()["agent_ids"][0])
+    assert agent["checks"]["verified"] is False and agent["checks"]["ran_code"] is False
+    files = [f["path"] for f in b["stages"]["package"]["detail"]["files"]]
+    assert "tools/csv-check/csv-check.py" in files and "lib/nx_cli.py" in files
+
+
+def test_failing_checks_trigger_a_repair_and_the_repaired_spec_is_verified(client, monkeypatch):
+    monkeypatch.setenv("NEXARA_RUN_GENERATED_CODE", "1")
+    from backend.models import AgentSpec
+    from tests.artifacts import golden
+    bad = golden.tool_only()
+    bad["scripts"][0]["examples"][0]["expect_contains"] = ["definitely-not-in-the-output"]
+    seen = []
+
+    async def fake_revise(spec, instruction, request=None):
+        seen.append(instruction)
+        return AgentSpec(**golden.tool_only()).model_dump(), "anthropic", "fake-model"
+    monkeypatch.setattr(agent_service, "revise_spec", fake_revise)
+    rid = _setup(client, monkeypatch, spec=AgentSpec(**bad).model_dump())
+    client.post(f"/api/requests/{rid}/build")
+    b = _wait(client, rid, 60)
+    assert b["status"] == "ready" and len(seen) == 1 and "definitely-not-in-the-output" in seen[0]
+    agent = dbm.get_agent(client.get(f"/api/requests/{rid}").json()["agent_ids"][0])
+    assert agent["checks"]["verified"] is True and agent["checks"]["ran_code"] is True
+    assert agent["spec"]["scripts"][0]["examples"][0]["expect_contains"] != ["definitely-not-in-the-output"]
+
+
+def test_checks_that_cannot_be_repaired_stop_the_build(client, monkeypatch):
+    monkeypatch.setenv("NEXARA_RUN_GENERATED_CODE", "1")
+    from backend.models import AgentSpec
+    from tests.artifacts import golden
+    bad = golden.tool_only()
+    bad["scripts"][0]["examples"][0]["expect_contains"] = ["nope"]
+    calls = []
+
+    async def same(spec, instruction, request=None):
+        calls.append(1)
+        return AgentSpec(**bad).model_dump(), "anthropic", "fake-model"
+    monkeypatch.setattr(agent_service, "revise_spec", same)
+    rid = _setup(client, monkeypatch, spec=AgentSpec(**bad).model_dump())
+    client.post(f"/api/requests/{rid}/build")
+    b = _wait(client, rid, 90)
+    assert b["status"] == "failed" and len(calls) == build_service.MAX_REPAIRS and "package" not in b["stages"]
+    assert "did not pass its own checks" in b["stages"]["test"]["title"]
