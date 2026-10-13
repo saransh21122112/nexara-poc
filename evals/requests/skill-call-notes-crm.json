@@ -1,0 +1,26 @@
+{
+  "name": "skill-call-notes-crm",
+  "request": {
+    "company_name": "Brightline Solar",
+    "industry": "Residential solar installation",
+    "agent_type": "Skill",
+    "business_problem": "Sales reps type messy call notes and forget to update the CRM, so follow-ups are missed.",
+    "tasks": "Turn raw call notes into structured CRM fields (contact, stage, roof type, budget, objections, next step with date) and draft a follow-up email for the rep to send.",
+    "existing_tools": "HubSpot, Gmail",
+    "required_output": "CRM field block, next-step list with dates, and a follow-up email draft under 150 words.",
+    "examples": "Notes: 'spoke w/ Dana Ruiz, 2-storey, tile roof, worried about cost, wants quote by fri, bills ~$240/mo'",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Turn these call notes into CRM fields: 'Talked to Mark Obi, flat roof, wants battery too, budget around 18k, will decide after talking to his wife, call back Tuesday.'",
+    "expect_any": [
+      "mark",
+      "battery",
+      "tuesday",
+      "next step"
+    ]
+  },
+  "probes": []
+}

@@ -1,0 +1,25 @@
+{
+  "name": "tool-sla-calculator",
+  "request": {
+    "company_name": "Quillstone Support",
+    "industry": "Customer support outsourcing",
+    "agent_type": "Tool",
+    "business_problem": "Agents miscalculate SLA deadlines across weekends, holidays and shifts, so tickets breach unnoticed.",
+    "tasks": "Given a start timestamp with a UTC offset, a number of business hours or days, business hours (e.g. 09:00-17:00 Mon-Fri) and a holiday list, compute the due timestamp and whether a ticket is breached at a given 'now'.",
+    "existing_tools": "Zendesk, Google Calendar",
+    "required_output": "JSON with due timestamp, hours remaining or overdue, and breached true/false.",
+    "examples": "start 2026-03-06T16:30:00+00:00 (Friday), 4 business hours, hours 09:00-17:00 Mon-Fri -> due Monday 2026-03-09T12:30:00+00:00",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Calculate the SLA due time: start 2026-03-06T16:30:00+00:00, 4 business hours, business hours 09:00-17:00 Monday to Friday, no holidays.",
+    "expect_any": [
+      "2026-03-09",
+      "monday",
+      "12:30"
+    ]
+  },
+  "probes": []
+}

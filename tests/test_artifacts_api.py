@@ -114,3 +114,23 @@ def test_sync_checks_every_agent_it_pushes_not_only_the_changed_ones(env, monkey
     assert env.deliver_raw(aid, unverified_code_ack=True).status_code == 201
     r = env.sync_raw(cid, {"confirm": True})                       # nothing changed, but the push would still carry unverified code
     assert r.status_code == 409 and "unverified_code_ack" in r.json()["detail"]
+
+
+def test_delivering_a_plain_agent_cannot_carry_another_agents_unverified_code_along(env, monkeypatch):
+    """Review finding: a delivery rewrites the whole repo, so every agent it pushes needs to be verified, not only the one being delivered."""
+    monkeypatch.delenv("NEXARA_RUN_GENERATED_CODE", raising=False)
+    _, a1, cid = env.mk(spec=code_spec())
+    assert env.deliver_raw(a1, unverified_code_ack=True).status_code == 201
+    env.merge_open_pr(cid) if dbm.open_change(dbm.get_repo_for_customer(cid)["id"]) else None
+    _, a2, _ = env.mk()                                     # a plain, harmless second agent for the same customer
+    r = env.deliver_raw(a2, existing_repo_ack=True)
+    assert r.status_code == 409 and "unverified_code_ack" in r.json()["detail"], r.text
+    assert env.deliver_raw(a2, existing_repo_ack=True, unverified_code_ack=True).status_code == 201
+
+
+def test_two_agents_with_the_same_component_name_conflict_cleanly(env):
+    _, a1, _ = env.mk(spec=code_spec())
+    assert env.deliver_raw(a1, unverified_code_ack=True).status_code == 201
+    _, a2, _ = env.mk(spec=code_spec())
+    r = env.deliver_raw(a2, existing_repo_ack=True, unverified_code_ack=True)
+    assert r.status_code == 409 and "cannot share one plugin" in r.json()["detail"]

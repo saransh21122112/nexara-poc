@@ -1,0 +1,26 @@
+{
+  "name": "skill-invoice-po-check",
+  "request": {
+    "company_name": "Harbor Foods",
+    "industry": "Food distribution",
+    "agent_type": "Skill",
+    "business_problem": "Accounts payable compares supplier invoices against purchase orders by eye and misses quantity, price and tax differences that cost us money.",
+    "tasks": "Given a pasted supplier invoice and the matching purchase order, list every mismatch (item, quantity, unit price, tax, totals), say whether to approve, query or reject, and draft a short query email to the supplier.",
+    "existing_tools": "Excel, SAP Business One",
+    "required_output": "A mismatch table, a recommendation (approve / query supplier / reject) and a draft email.",
+    "examples": "PO-7781: 40 x Olive oil 5L @ 21.50. Invoice INV-2290 bills 44 x Olive oil 5L @ 21.50 and 12% tax instead of 8%.",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Check this invoice against the PO. PO-100: 10 x Rice 25kg @ 18.00. Invoice INV-9: 12 x Rice 25kg @ 18.00, tax 8%, total 233.28.",
+    "expect_any": [
+      "mismatch",
+      "quantity",
+      "12",
+      "10"
+    ]
+  },
+  "probes": []
+}

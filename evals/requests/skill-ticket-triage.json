@@ -1,0 +1,25 @@
+{
+  "name": "skill-ticket-triage",
+  "request": {
+    "company_name": "Northwind Outfitters",
+    "industry": "Online retail (outdoor gear)",
+    "agent_type": "Skill",
+    "business_problem": "Our 6-person support team reads every ticket by hand to decide what it is and who should handle it, and replies are inconsistent in tone.",
+    "tasks": "Sort each customer ticket into billing, shipping, product defect, returns or other; rate urgency; draft a reply in our friendly, plain tone that a human reviews before sending.",
+    "existing_tools": "Zendesk, Google Sheets",
+    "required_output": "Category, urgency (low/normal/high/urgent), one-line summary, and a draft reply of under 120 words.",
+    "examples": "Ticket: 'My tent arrived with a snapped pole and the trip is Saturday. Order NW-48213.' -> shipping/defect, urgent.\nTicket: 'Can I change the address on order NW-48220?' -> shipping, normal.",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Triage this support ticket: 'Hi, I was charged twice for order NW-51002 and I need the extra charge refunded today, I am travelling tomorrow.'",
+    "expect_any": [
+      "billing",
+      "urgent",
+      "refund"
+    ]
+  },
+  "probes": []
+}

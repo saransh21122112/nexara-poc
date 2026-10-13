@@ -1,0 +1,25 @@
+{
+  "name": "tool-csv-quality",
+  "request": {
+    "company_name": "Meridian Logistics",
+    "industry": "Freight and logistics",
+    "agent_type": "Tool",
+    "business_problem": "Carriers email us shipment CSVs with missing values, duplicate rows, bad dates and inconsistent columns, and bad data reaches our systems.",
+    "tasks": "Check a CSV and report row count, columns, empty cells per column, duplicate rows, rows with the wrong number of fields, and values in date columns that are not valid ISO dates.",
+    "existing_tools": "Excel, Python scripts",
+    "required_output": "A JSON report with counts and the first examples of each problem, plus an overall pass/fail.",
+    "examples": "shipment_id,ship_date,weight_kg\nS1,2026-01-05,12.5\nS2,05/01/2026,\nS2,05/01/2026,",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Run the CSV quality checker on this data and explain the problems:\nid,date,qty\n1,2026-02-01,5\n2,01/02/2026,\n2,01/02/2026,\n3,2026-02-03",
+    "expect_any": [
+      "duplicate",
+      "date",
+      "empty"
+    ]
+  },
+  "probes": []
+}

@@ -1,0 +1,25 @@
+{
+  "name": "skill-release-notes",
+  "request": {
+    "company_name": "Kestrel Software",
+    "industry": "B2B SaaS",
+    "agent_type": "Skill",
+    "business_problem": "Release notes are written from raw commit lists by whoever has time, so they are technical, late and inconsistent.",
+    "tasks": "Convert a changelog or commit list into customer-facing release notes grouped as New, Improved and Fixed, in plain language, flagging breaking changes and anything that needs a customer action.",
+    "existing_tools": "GitHub, Confluence",
+    "required_output": "Markdown release notes with a short headline summary and a 'Needs your attention' section when relevant.",
+    "examples": "feat(export): add CSV export to reports\nfix(auth): token refresh loop on Safari\nBREAKING: remove v1 /orders endpoint",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Write release notes from: 'feat: dark mode for dashboard; fix: invoice PDF missing logo; BREAKING: drop support for API key auth, use OAuth'",
+    "expect_any": [
+      "dark mode",
+      "breaking",
+      "oauth"
+    ]
+  },
+  "probes": []
+}

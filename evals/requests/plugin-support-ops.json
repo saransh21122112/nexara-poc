@@ -1,0 +1,26 @@
+{
+  "name": "plugin-support-ops",
+  "request": {
+    "company_name": "Fernhill Online",
+    "industry": "E-commerce marketplace",
+    "agent_type": "Plugin",
+    "business_problem": "Support operations are spread across tribal knowledge: triage rules, reply quality checks and SLA tracking are all manual.",
+    "tasks": "One plugin for support operations: a triage skill (category, urgency, draft reply), a reviewer subagent that checks a draft reply for risky promises and tone, and a business-hours SLA calculator tool, plus a skill that uses the calculator to tell an agent when a ticket is due.",
+    "existing_tools": "Zendesk, Slack",
+    "required_output": "Triage block, reviewer feedback list, and an SLA due time.",
+    "examples": "Ticket: 'Seller never shipped my order 7788, want my money back.' Business hours 09:00-17:00 Mon-Fri, first response SLA 4 business hours.",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Triage this ticket and tell me when the first response is due if it arrived 2026-03-06T16:30:00+00:00 (business hours 09:00-17:00 Mon-Fri, 4 business hours): 'My order 7788 never arrived, I want a refund.'",
+    "expect_any": [
+      "2026-03-09",
+      "monday",
+      "refund",
+      "shipping"
+    ]
+  },
+  "probes": []
+}

@@ -1,0 +1,26 @@
+{
+  "name": "plugin-eng-onboarding",
+  "request": {
+    "company_name": "Stonebridge Labs",
+    "industry": "Software consultancy",
+    "agent_type": "Plugin",
+    "business_problem": "New engineers spend their first weeks asking where docs live, how to set up repos and what the team conventions are.",
+    "tasks": "An onboarding plugin: a docs search server over the team's markdown handbook folder (search and read, nothing outside the folder), a skill that builds a personalised first-week plan from role and stack, and a reviewer subagent that checks a new engineer's setup notes against the handbook.",
+    "existing_tools": "Markdown handbook in git, Slack",
+    "required_output": "A first-week plan citing handbook pages by path; review feedback citing the handbook.",
+    "examples": "Handbook pages: setup/laptop.md, conventions/git-flow.md, conventions/code-review.md, oncall/runbook.md",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Search the handbook for our git workflow and tell me which page to read first.",
+    "tool_prefix": true
+  },
+  "probes": [
+    {
+      "match": "read|get|open|doc",
+      "value": "../../../etc/passwd"
+    }
+  ]
+}

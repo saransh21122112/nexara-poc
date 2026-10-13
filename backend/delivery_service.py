@@ -54,6 +54,14 @@ def _agent_ctx(agent_id: str):
     return agent, request, ensure_customer(request)
 
 
+def _repo_files(*a, **k) -> dict[str, str]:
+    """repo_gen.repo_files, with a component-name clash between two agents reported as a normal conflict instead of a server error."""
+    try:
+        return repo_gen.repo_files(*a, **k)
+    except ValueError as e:
+        raise DeliveryError(f"These agents cannot share one plugin: {e}. Rename a component in one of them.", 409) from None
+
+
 def code_status(spec: dict, checks: dict | None) -> dict:
     """Does this spec ship code (tool scripts / MCP servers), and have its checks passed for EXACTLY this content?"""
     from .artifacts import checks as code_checks
@@ -200,7 +208,7 @@ def preview(gh: GitHubClient, agent_id: str, support_email: str = "") -> dict:
     in_repo = bool(repo) and dbm.get_repo_agent(repo["id"], agent_id) is not None
     name = repo["name"] if repo else _repo_name_for(gh, customer)
     owner = repo["owner"] if repo else gh.owner
-    files = repo_gen.repo_files(customer, {"owner": owner, "name": name}, entries, support_email, legacy_names(repo) if repo else [])
+    files = _repo_files(customer, {"owner": owner, "name": name}, entries, support_email, legacy_names(repo) if repo else [])
     url = repo["url"] if repo else f"https://github.com/{owner}/{name}"
     invited_already = bool(repo) and (repo.get("invited_user") or "").lower() == (user or "").lower() and repo.get("invite_status") in ("pending", "accepted")
     return {
@@ -248,7 +256,7 @@ MAIN = "main"
 def _plan(gh: GitHubClient, customer: dict, repo: dict, entries: list[dict], message_lines: list[str], overwrite: bool, support_email: str) -> dict:
     """Pure computation against what is on main right now: the files to write, hand-edit conflicts and the resulting changes."""
     legacy = legacy_names(repo)
-    files = repo_gen.repo_files(customer, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy)
+    files = _repo_files(customer, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy)
     base = gh.head(repo["name"])
     remote = gh.tree(repo["name"], base)
     # The customer's own area (custom/) is created once if missing and then left strictly alone: even the starter file we ship there
@@ -329,7 +337,6 @@ def _propose(gh, customer, repo, entries, message_lines, plan, msg, executable, 
 def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: bool = False, support_email: str = "",
             existing_repo_ack: bool = False, overwrite_dev: bool = False, unverified_code_ack: bool = False) -> dict:
     agent, request, customer = _agent_ctx(agent_id)
-    require_code_ack([(agent_id, agent["spec"])], unverified_code_ack)
     if reason := unverified_reason(request):
         raise DeliveryError(reason + " Nothing was created.", 409)
     with _lock(customer["id"]):
@@ -337,6 +344,9 @@ def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: boo
         user, blocked = invitee(customer, request, bool(repo))
         if invite and blocked and (request.get("github_username") or customer.get("github_username")):
             raise DeliveryError(blocked + " Nothing was created. Deliver without the invitation to proceed.", 409)
+        # a delivery rewrites the whole repository: every agent it will push needs to be verified, not only the one being delivered
+        require_code_ack([(e["agent_id"], e["spec"]) for e in (_entries(repo, {"agent_id": agent_id, "spec": agent["spec"]}) if repo else [{"agent_id": agent_id, "spec": agent["spec"]}])],
+                         unverified_code_ack)
         has_content = bool(repo) and bool(dbm.list_repo_agents(repo["id"]))        # an empty repo from a failed first delivery is just a retry
         if has_content and not existing_repo_ack and dbm.get_repo_agent(repo["id"], agent_id) is None:
             raise DeliveryError("This adds content to an existing customer repository. Acknowledge that you checked the request "
@@ -350,6 +360,7 @@ def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: boo
             created = True
         try:
             entries = _entries(repo, {"agent_id": agent_id, "spec": agent["spec"]})
+            require_code_ack([(e["agent_id"], e["spec"]) for e in entries], unverified_code_ack)      # again on exactly what is pushed (a spec may have been edited meanwhile)
             slug = next(e["slug"] for e in entries if e["agent_id"] == agent_id)
             first = not dbm.list_repo_agents(repo["id"])
             lines = [f"{'Initial delivery: ' if created or first else 'Added/updated agent: '}{agent['spec']['agent_name']} (/{slug})"]
@@ -575,6 +586,6 @@ def plugin_zip_for(customer_id: str, support_email: str = "", unverified_code_ac
     if not entries:
         raise DeliveryError("This customer has no delivered agents yet.", 409)
     require_code_ack([(e["agent_id"], e["spec"]) for e in entries], unverified_code_ack)
-    files = repo_gen.repo_files(cust, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy_names(repo))
+    files = _repo_files(cust, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy_names(repo))
     plugin = repo_gen.company_slug(cust["slug"])
     return repo_gen.plugin_zip(files, plugin), plugin

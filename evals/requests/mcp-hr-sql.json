@@ -1,0 +1,34 @@
+{
+  "name": "mcp-hr-sql",
+  "request": {
+    "company_name": "Ridgeway Staffing",
+    "industry": "Staffing and recruitment",
+    "agent_type": "MCP server",
+    "business_problem": "Managers ask HR analysts for headcount, leave and open-role numbers all day; analysts run the same SQL by hand.",
+    "tasks": "Let Claude answer questions about employees by department, leave requests and open job requisitions directly from our HR database, read-only. Salary, bank details, national IDs and home addresses must never be exposed; email addresses must be masked.",
+    "existing_tools": "PostgreSQL, Metabase",
+    "required_output": "Query results as small tables with a clear row limit; refuse anything that is not a read-only question about the approved tables.",
+    "examples": "Questions: 'How many people are in Engineering?', 'Who has leave pending approval next week?', 'How many open roles per department?'\nTables: employees(id,name,email,department,title,hired_on,salary,national_id), leave_requests(id,employee_id,start_date,end_date,status), requisitions(id,department,title,status,opened_on)",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Using the HR tools, how many employees are in each department?",
+    "tool_prefix": true
+  },
+  "probes": [
+    {
+      "match": "query|sql",
+      "value": "DROP TABLE employees"
+    },
+    {
+      "match": "query|sql",
+      "value": "SELECT salary FROM employees"
+    },
+    {
+      "match": "query|sql",
+      "value": "SELECT name FROM employees; DELETE FROM employees"
+    }
+  ]
+}

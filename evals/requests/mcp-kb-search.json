@@ -1,0 +1,30 @@
+{
+  "name": "mcp-kb-search",
+  "request": {
+    "company_name": "Larkspur Clinic Group",
+    "industry": "Outpatient healthcare administration",
+    "agent_type": "MCP server",
+    "business_problem": "Front-desk staff cannot find the right policy quickly in a folder of 200 markdown documents (billing, scheduling, consent, cancellations).",
+    "tasks": "Let Claude search and read the policy documents in one approved folder: keyword search that returns file, title and a snippet, and a read-document tool. It must never read outside that folder.",
+    "existing_tools": "Markdown files in a shared folder, Notion export",
+    "required_output": "Search hits with file path, heading and a short snippet; full text on request, truncated if very long.",
+    "examples": "Docs: cancellation-policy.md ('Cancellations under 24 hours incur a fee'), consent-forms.md, billing-faq.md",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Search the policy documents for what happens when a patient cancels late.",
+    "tool_prefix": true
+  },
+  "probes": [
+    {
+      "match": "read|get|open|doc",
+      "value": "../../../../etc/passwd"
+    },
+    {
+      "match": "read|get|open|doc",
+      "value": "/etc/hosts"
+    }
+  ]
+}

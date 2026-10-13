@@ -1,0 +1,27 @@
+{
+  "name": "tool-invoice-reconciler",
+  "request": {
+    "company_name": "Alder & Finch Accounting",
+    "industry": "Accounting services",
+    "agent_type": "Tool",
+    "business_problem": "Clerks recompute invoice totals and tax by hand and rounding differences cause disputes with clients.",
+    "tasks": "Given invoice lines (quantity, unit price, tax rate) and the stated subtotal, tax and total, recompute them exactly with decimal arithmetic and report every difference, including rounding by line versus by invoice.",
+    "existing_tools": "QuickBooks, Excel",
+    "required_output": "JSON with recomputed subtotal, tax by rate, total, each difference and a verdict of match or mismatch.",
+    "examples": "lines: 3 x 19.99 @ 20%, 1 x 5.50 @ 0%; stated total 69.43",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Reconcile this invoice: lines 3 x 19.99 tax 20%, 1 x 5.50 tax 0%. Stated subtotal 65.47, tax 12.00, total 77.47.",
+    "expect_any": [
+      "mismatch",
+      "match",
+      "11.99",
+      "12.00",
+      "total"
+    ]
+  },
+  "probes": []
+}

@@ -1,0 +1,30 @@
+{
+  "name": "mcp-ticket-reader",
+  "request": {
+    "company_name": "Copperline Telecom",
+    "industry": "Telecommunications",
+    "agent_type": "MCP server",
+    "business_problem": "Team leads check the ticketing system by hand to find breaching tickets and summarise queues.",
+    "tasks": "Let Claude read tickets from our ticketing system REST API, read-only: list open tickets (filter by queue and priority), get one ticket with its comments, and list tickets past their SLA. No creating, closing or commenting.",
+    "existing_tools": "Ticketing system with REST API at https://tickets.copperline.example/api (bearer token)",
+    "required_output": "Tables of tickets with id, subject, priority, queue, age and SLA status.",
+    "examples": "GET /api/tickets?status=open&queue=billing -> {tickets:[{id:'T-88',subject:'Double charge',priority:'high',queue:'billing',sla_breached:true}]}",
+    "contact_email": "eval@example.com",
+    "github_username": "eval-user",
+    "claude_status": "have_claude_account"
+  },
+  "smoke": {
+    "prompt": "Use the ticket tools to list the open tickets that have breached their SLA.",
+    "tool_prefix": true
+  },
+  "probes": [
+    {
+      "match": "get|ticket",
+      "value": "https://evil.example/x"
+    },
+    {
+      "match": "get|ticket",
+      "value": "http://127.0.0.1:22/"
+    }
+  ]
+}
