@@ -99,7 +99,7 @@ def _uses_section(spec: dict, plugin: str, uses: list[str]) -> tuple[str, list[s
             s = scripts[u]
             tools.append(script_pattern(u))
             lines.append(f"- **{u}** - {s['description'].strip()}\n  Run: `python3 ${{CLAUDE_PLUGIN_ROOT}}/tools/{u}/{u}.py --json '<JSON input>'` "
-                         f"(add `--text-file <path>` to pass a text/CSV file as `text`). It prints one JSON line: `{{\"ok\": true, \"result\": ...}}` or `{{\"ok\": false, \"error\": ...}}`."
+                         f"(add `--text-file <path>` to pass a text/CSV file from the current folder as `text`). It prints one JSON line: `{{\"ok\": true, \"result\": ...}}` or `{{\"ok\": false, \"error\": ...}}`."
                          + (f"\n  Input: `{json.dumps(s['inputs'], ensure_ascii=False)}`" if s.get("inputs") else ""))
             continue
         server, _, tool = u.partition("/")

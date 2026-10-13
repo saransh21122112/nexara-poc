@@ -135,7 +135,7 @@ def test_server_without_a_config_says_how_to_set_it_up(plugin_dir):
 def test_script_reads_a_file_via_text_file(plugin_dir, tmp_path):
     f = tmp_path / "d.csv"
     f.write_text("a,b\n1,\n1,\n")
-    p = subprocess.run([sys.executable, str(plugin_dir / "tools/csv-check/csv-check.py"), "--text-file", str(f)], capture_output=True, text=True)
+    p = subprocess.run([sys.executable, str(plugin_dir / "tools/csv-check/csv-check.py"), "--text-file", "d.csv"], capture_output=True, text=True, cwd=tmp_path)
     out = json.loads(p.stdout)
     assert out["ok"] and out["result"]["duplicate_rows"] == 1
 
@@ -150,3 +150,16 @@ def test_real_claude_plugin_validate_accepts_every_kind(tmp_path):
         data = json.loads(p.stdout)
         bad = [x for x in data.get("errors", [])] + [w for w in data.get("warnings", []) if "version" not in json.dumps(w).lower()]
         assert not bad, (name, bad)
+
+
+def test_repo_files_mixes_plain_and_structured_agents():
+    from backend import repo_gen
+    from tests.test_api import SPEC
+    cust = {"company_name": "Acme Corp", "slug": "acme-corp"}
+    repo = {"owner": "o", "name": "nexara-acme-corp"}
+    structured = AgentSpec(**golden.plugin_all()).model_dump()
+    files = repo_gen.repo_files(cust, repo, [{"slug": "plain-one", "spec": SPEC}, {"slug": "golden", "spec": structured}])
+    assert "agents/plain-one.md" in files and "skills/plain-one/SKILL.md" in files                # the old layout still comes out for plain specs
+    assert "servers/hr-data/server.py" in files and ".mcp.json" in files and "lib/nx_mcp.py" in files
+    assert "/acme-corp:hr-lookup" in files["README.md"] and "servers/hr-data" in files["README.md"]
+    assert repo_gen.is_executable("tools/csv-check/csv-check.py") and repo_gen.is_executable("servers/hr-data/server.py") and not repo_gen.is_executable("lib/nx_cli.py")

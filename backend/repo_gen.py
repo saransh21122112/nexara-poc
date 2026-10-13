@@ -22,7 +22,7 @@ def git_blob_sha(text: str) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-GENERATOR_VERSION = 3   # bump when the generated files change meaningfully: every delivered agent then shows "repo behind" until synced
+GENERATOR_VERSION = 4   # bump when the generated files change meaningfully: every delivered agent then shows "repo behind" until synced
 
 
 def spec_hash(spec: dict) -> str:
@@ -174,11 +174,25 @@ def repo_files(customer: dict, repo: dict, agents: list[dict], support_email: st
             raise ValueError(f"unsafe {label} name for generated scripts: {val!r}")
     if not all(re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", x) for x in slugs):
         raise ValueError("unsafe agent slug for generated scripts")
-    agent_list = "\n".join(f"- `/{plugin}:{a['slug']} <what to review or do>` - {_first_sentence(a['spec']['purpose'], 160)}" for a in agents) or "- (agents will appear here)"
+    from .artifacts import materialize       # lazy: materialize imports this module for its text helpers
+    structured = [a for a in agents if materialize.is_structured(a["spec"])]
+    plain = [a for a in agents if a not in structured]
+    agent_list = "\n".join(f"- `/{plugin}:{a['slug']} <what to review or do>` - {_first_sentence(a['spec']['purpose'], 160)}" for a in plain)
+    if structured:
+        agent_list = (agent_list + "\n" if agent_list else "") + "\n".join(materialize.listing(a["spec"], plugin) for a in structured)
+    agent_list = agent_list or "- (agents will appear here)"
+    if structured:
+        commands = ", ".join([f"/{plugin}:{x['slug']}" for x in plain] + [f"/{plugin}:{n}" for a in structured for n in sorted(materialize.component_names(a["spec"])["skills"])]) or commands
 
     files: dict[str, str] = {}
-    for a in agents:
+    for a in plain:
         files.update(agent_files(a["spec"], a["slug"], plugin))
+    if structured:
+        built = materialize.assemble([a["spec"] for a in structured], plugin)
+        clash = sorted(set(built) & set(files))
+        if clash:
+            raise ValueError(f"a structured agent and a plain agent define the same file: {clash[0]}")
+        files.update(built)
 
     blurb = _cut(f"Nexara AI agents for {company}: " + "; ".join(a["spec"]["agent_name"] for a in agents), 250) if agents else f"Nexara AI agents for {company}"
     files[".claude-plugin/plugin.json"] = json.dumps(
@@ -208,7 +222,7 @@ def repo_files(customer: dict, repo: dict, agents: list[dict], support_email: st
 
 
 def is_executable(path: str) -> bool:
-    return path.endswith(".sh")
+    return path.endswith(".sh") or bool(re.fullmatch(r"(tools/[^/]+/[^/]+\.py|servers/[^/]+/server\.py)", path))
 
 
 def plugin_zip(files: dict[str, str], plugin: str) -> bytes:

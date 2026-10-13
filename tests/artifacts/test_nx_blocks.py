@@ -301,7 +301,8 @@ def test_db_introspection_lists_every_real_column_including_unreadable_ones(tmp_
     assert db.columns("no_such_table") == []
 
 
-def test_cli_text_file_arrives_as_text_alongside_json_options(tmp_path):
+def test_cli_text_file_arrives_as_text_alongside_json_options(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     f = tmp_path / "data.csv"
     f.write_text("a,b\n1,2\n", encoding="utf-8")
     out = io.StringIO()
@@ -312,6 +313,7 @@ def test_cli_text_file_arrives_as_text_alongside_json_options(tmp_path):
 
 
 def test_cli_text_file_missing_or_huge_is_a_clean_user_error(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     out = io.StringIO()
     assert nx_cli.main(lambda a: 1, argv=["--text-file", str(tmp_path / "nope")], stdin=io.StringIO(""), stdout=out) == 2
     big = tmp_path / "big.txt"
@@ -319,3 +321,28 @@ def test_cli_text_file_missing_or_huge_is_a_clean_user_error(tmp_path, monkeypat
     monkeypatch.setattr(nx_cli, "MAX_TEXT", 10)
     out = io.StringIO()
     assert nx_cli.main(lambda a: 1, argv=["--text-file", str(big)], stdin=io.StringIO(""), stdout=out) == 2 and "larger" in out.getvalue()
+
+
+@pytest.mark.parametrize("flag", ["--text-file", "--file"])
+def test_cli_input_files_must_be_plain_files_inside_the_working_directory(tmp_path, monkeypatch, flag):
+    work = tmp_path / "work"
+    (work / ".ssh").mkdir(parents=True)
+    (work / "sub").mkdir()
+    ok = work / "sub" / "data.txt"
+    ok.write_text('{"a": 1}')
+    (tmp_path / "outside.txt").write_text('{"a": "secret"}')
+    (work / ".env").write_text('{"a": "secret"}')
+    (work / ".ssh" / "id_rsa").write_text('{"a": "secret"}')
+    (work / "server.pem").write_text('{"a": "secret"}')
+    (work / "link").symlink_to(tmp_path / "outside.txt")
+    monkeypatch.chdir(work)
+
+    def run(path):
+        out = io.StringIO()
+        return nx_cli.main(lambda a: "ran", argv=[flag, str(path)], stdin=io.StringIO(""), stdout=out), json.loads(out.getvalue())
+
+    assert run(ok)[0] == 0
+    assert run("sub/data.txt")[0] == 0
+    for bad in (tmp_path / "outside.txt", "../outside.txt", work / ".env", work / ".ssh" / "id_rsa", work / "server.pem", work / "link", "/etc/hosts", work / "sub", work / "nope"):
+        code, body = run(bad)
+        assert code == 2 and body["ok"] is False and "secret" not in json.dumps(body), (bad, body)

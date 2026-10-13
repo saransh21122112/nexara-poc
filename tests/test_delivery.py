@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from backend import agent_service, delivery_service, main
+from backend import agent_service, delivery_service, main, repo_gen
 from backend import database as dbm
 from backend.github_client import GitHubClient
 from tests.fake_github import FakeGitHub
@@ -564,7 +564,7 @@ def test_v2_repo_is_migrated_to_the_root_plugin_layout_on_sync(env):
     assert mk["renames"] == {old: "acme-corp"}                                    # customers on the old plugin name migrate instead of breaking
     assert files["custom/notes.md"] == "customer notes"                           # the customer's area is untouched
     repo = dbm.get_repo_for_customer(cid)
-    assert repo["layout"] == 3 and repo["legacy"] == [old] and dbm.get_repo_agent(repo["id"], aid)["plugin_slug"] == "token-spend-analyst"
+    assert repo["layout"] == repo_gen.GENERATOR_VERSION and repo["legacy"] == [old] and dbm.get_repo_agent(repo["id"], aid)["plugin_slug"] == "token-spend-analyst"
     assert env.client.get(f"/api/customers/{cid}").json()["agents"][0]["behind"] is False
     assert env.sync(cid, {"confirm": True}).json()["status"] == "up_to_date"          # stable afterwards
     again = json.loads(env.fake.files(name)[".claude-plugin/marketplace.json"])
@@ -587,7 +587,7 @@ def test_new_deliveries_start_on_the_current_layout_with_no_legacy_names(env):
     _, aid, cid = env.mk()
     env.deliver(aid)
     repo = dbm.get_repo_for_customer(cid)
-    assert repo["layout"] == 3 and repo["legacy"] == []
+    assert repo["layout"] == repo_gen.GENERATOR_VERSION and repo["legacy"] == []
     assert "renames" not in json.loads(env.fake.files("nexara-acme-corp")[".claude-plugin/marketplace.json"])
 
 
