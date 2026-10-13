@@ -1,11 +1,17 @@
 """The checks that decide whether a structured deliverable is verified: static gate, real plugin validation, and the artifact's own examples run
 in the sandbox. Returns a plain report dict that is stored with the agent and shown to staff."""
+import hashlib
 import json
 import shutil
 import subprocess
 from pathlib import Path
 
 from . import materialize, sandbox, validate
+
+
+def spec_digest(spec: dict) -> str:
+    """A report describes exactly one spec: delivery compares this digest, so a report that finishes after an edit can never verify the new content."""
+    return hashlib.sha256(json.dumps(spec, sort_keys=True, default=str).encode()).hexdigest()[:24]
 
 
 def _c(group, name, ok, detail=""):
@@ -45,7 +51,13 @@ def _kit(root: Path, sub: str, group: str, label: str) -> list[dict]:
 
 
 def run_checks(spec: dict, plugin: str = "plugin") -> dict:
-    """Never raises for bad specs: problems become failed checks."""
+    """Never raises for bad specs: problems become failed checks. The report carries the digest of the spec it was run on."""
+    rep = _run_checks(spec, plugin)
+    rep["spec_digest"] = spec_digest(spec)
+    return rep
+
+
+def _run_checks(spec: dict, plugin: str) -> dict:
     if not materialize.is_structured(spec):
         return {"applicable": False, "ran_code": False, "verified": False, "reason": "This specification has no code to check.", "checks": [], "isolation": ""}
     checks = []

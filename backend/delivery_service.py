@@ -54,19 +54,23 @@ def _agent_ctx(agent_id: str):
     return agent, request, ensure_customer(request)
 
 
-def code_status(agent: dict) -> dict:
-    """Does this agent ship code (tool scripts / MCP servers), and have its checks passed for exactly this spec?"""
-    spec = agent["spec"]
+def code_status(spec: dict, checks: dict | None) -> dict:
+    """Does this spec ship code (tool scripts / MCP servers), and have its checks passed for EXACTLY this content?"""
+    from .artifacts import checks as code_checks
     has_code = bool(spec.get("scripts") or spec.get("mcp_servers"))
-    c = agent.get("checks") or {}
+    c = checks if checks and checks.get("spec_digest") == code_checks.spec_digest(spec) else {}
     return {"has_code": has_code, "verified": bool(c.get("verified")) if has_code else True, "ran_code": bool(c.get("ran_code")), "reason": c.get("reason", "") if has_code else ""}
 
 
-def require_code_ack(agent_ids: list[str], ack: bool) -> None:
-    """Code nobody has run is only delivered when a person says so explicitly."""
+def require_code_ack(items: list[tuple[str, dict]], ack: bool) -> None:
+    """items = [(agent_id, spec as it will be written)]. Code nobody has run is only delivered when a person says so explicitly."""
     if ack:
         return
-    names = [a["spec"]["agent_name"] for a in map(dbm.get_agent, agent_ids) if a and (st := code_status(a))["has_code"] and not st["verified"]]
+    names = []
+    for agent_id, spec in items:
+        live = dbm.get_agent(agent_id)
+        if code_status(spec, (live or {}).get("checks"))["has_code"] and not code_status(spec, (live or {}).get("checks"))["verified"]:
+            names.append(spec["agent_name"])
     if names:
         raise DeliveryError("This delivery contains code whose checks have not passed on this host: " + ", ".join(names)
                             + ". Run the checks first, or acknowledge that a person reviewed the code (unverified_code_ack=true).", 409)
@@ -183,7 +187,7 @@ def preview(gh: GitHubClient, agent_id: str, support_email: str = "") -> dict:
     if not request.get("email_verified") and not verification_required():
         warnings.append("Email verification is switched OFF (REQUIRE_EMAIL_VERIFICATION=false): nobody has confirmed that "
                         f"{request.get('contact_email')} belongs to the requester. Check this request really comes from this customer.")
-    code = code_status(agent)
+    code = code_status(agent["spec"], agent.get("checks"))
     if code["has_code"] and not code["verified"]:
         warnings.append("This contains code that has not been run and checked here" + (f" ({code['reason']})" if code["reason"] else "") + ". Review the Artifact panel before delivering.")
     if blocked:
@@ -325,7 +329,7 @@ def _propose(gh, customer, repo, entries, message_lines, plan, msg, executable, 
 def deliver(gh: GitHubClient, agent_id: str, invite: bool = True, overwrite: bool = False, support_email: str = "",
             existing_repo_ack: bool = False, overwrite_dev: bool = False, unverified_code_ack: bool = False) -> dict:
     agent, request, customer = _agent_ctx(agent_id)
-    require_code_ack([agent_id], unverified_code_ack)
+    require_code_ack([(agent_id, agent["spec"])], unverified_code_ack)
     if reason := unverified_reason(request):
         raise DeliveryError(reason + " Nothing was created.", 409)
     with _lock(customer["id"]):
@@ -403,7 +407,7 @@ def sync(gh: GitHubClient, customer_id: str, overwrite: bool = False, support_em
     with _lock(customer_id):
         entries = _entries(repo)
         changed_agents = behind(entries)
-        require_code_ack([e["agent_id"] for e in changed_agents], unverified_code_ack)
+        require_code_ack([(e["agent_id"], e["spec"]) for e in entries], unverified_code_ack)
         lines = [f"Updated agent: {e['spec']['agent_name']} (/{e['slug']})" for e in changed_agents] or ["Re-synced repository files"]
         try:
             result = _push(gh, cust, repo, entries, lines, overwrite, support_email, via_pr=bool(dbm.list_repo_agents(repo["id"])), overwrite_dev=overwrite_dev)
@@ -559,7 +563,7 @@ def attach_request(request_id: str, customer_id: str) -> dict:
     return {"request_id": request_id, "customer_id": customer_id}
 
 
-def plugin_zip_for(customer_id: str, support_email: str = "") -> tuple[bytes, str]:
+def plugin_zip_for(customer_id: str, support_email: str = "", unverified_code_ack: bool = False) -> tuple[bytes, str]:
     """Fallback for customers without GitHub: the current plugin built from the live specs. Returns (zip bytes, plugin name)."""
     cust = dbm.get_customer(customer_id)
     if not cust:
@@ -570,6 +574,7 @@ def plugin_zip_for(customer_id: str, support_email: str = "") -> tuple[bytes, st
     entries = _entries(repo)
     if not entries:
         raise DeliveryError("This customer has no delivered agents yet.", 409)
+    require_code_ack([(e["agent_id"], e["spec"]) for e in entries], unverified_code_ack)
     files = repo_gen.repo_files(cust, {"owner": repo["owner"], "name": repo["name"]}, entries, support_email, legacy_names(repo))
     plugin = repo_gen.company_slug(cust["slug"])
     return repo_gen.plugin_zip(files, plugin), plugin

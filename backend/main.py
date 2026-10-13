@@ -441,7 +441,9 @@ def agent_artifact(agent_id: str):
             vetted = path.startswith("lib/")
             files.append({"path": path, "bytes": len(content.encode()), "kind": "vetted" if vetted else "code" if path.endswith((".py", ".json")) else "doc",
                           "content": None if vetted else content})
-    return {"structured": structured, "files": files, "checks": a.get("checks"), "run_enabled": sandbox.enabled()}
+    c = a.get("checks")
+    current = c if c and c.get("spec_digest") == code_checks.spec_digest(a["spec"]) else None            # a report for an older version of the spec is not shown
+    return {"structured": structured, "files": files, "checks": current, "run_enabled": sandbox.enabled()}
 
 
 @app.post("/api/agents/{agent_id}/run-checks", dependencies=[Depends(factory_auth)])
@@ -494,9 +496,9 @@ def customer(customer_id: str):
 
 
 @app.get("/api/customers/{customer_id}/plugin-zip", dependencies=[Depends(factory_auth)])
-def customer_plugin_zip(customer_id: str):
-    """Fallback for customers without GitHub: the current plugin as a zip (no auto-update)."""
-    data, plugin = delivery_service.plugin_zip_for(customer_id, SUPPORT_EMAIL())
+def customer_plugin_zip(customer_id: str, unverified_code_ack: bool = False):
+    """Fallback for customers without GitHub: the current plugin as a zip (no auto-update). Code that was not verified needs the same acknowledgement as delivery."""
+    data, plugin = delivery_service.plugin_zip_for(customer_id, SUPPORT_EMAIL(), unverified_code_ack)
     return Response(data, media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{plugin}.zip"'})
 
 

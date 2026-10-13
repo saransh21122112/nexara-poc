@@ -80,3 +80,37 @@ def test_sync_of_unverified_code_also_needs_the_acknowledgement(env, monkeypatch
     r = env.sync_raw(cid, {"confirm": True})
     assert r.status_code == 409 and "unverified_code_ack" in r.json()["detail"]
     assert env.sync_raw(cid, {"confirm": True, "unverified_code_ack": True}).status_code == 200
+
+
+def test_a_report_only_counts_for_the_exact_spec_it_was_run_on(env, monkeypatch):
+    """Review finding: a check that finishes after the spec was edited must not make the NEW spec look verified."""
+    monkeypatch.setenv("NEXARA_RUN_GENERATED_CODE", "1")
+    _, aid, _ = env.mk(spec=code_spec())
+    old_spec = dbm.get_agent(aid)["spec"]
+    from backend.artifacts import checks
+    report = checks.run_checks(old_spec, "acme")
+    assert report["verified"] is True
+    edited = dict(old_spec, scripts=[dict(old_spec["scripts"][0], handler_source=old_spec["scripts"][0]["handler_source"] + "\n# edited\n")])
+    dbm.update_agent_spec(aid, edited)
+    dbm.save_checks(aid, report)                                  # the slow run lands AFTER the edit
+    assert env.client.get(f"/api/agents/{aid}/artifact").json()["checks"] is None
+    r = env.deliver_raw(aid)
+    assert r.status_code == 409 and "unverified_code_ack" in r.json()["detail"]
+
+
+def test_the_zip_download_is_gated_like_delivery(env, monkeypatch):
+    monkeypatch.delenv("NEXARA_RUN_GENERATED_CODE", raising=False)
+    _, aid, cid = env.mk(spec=code_spec())
+    assert env.deliver_raw(aid, unverified_code_ack=True).status_code == 201
+    r = env.client.get(f"/api/customers/{cid}/plugin-zip")
+    assert r.status_code == 409 and "unverified_code_ack" in r.json()["detail"]
+    ok = env.client.get(f"/api/customers/{cid}/plugin-zip?unverified_code_ack=true")
+    assert ok.status_code == 200 and ok.headers["content-type"] == "application/zip"
+
+
+def test_sync_checks_every_agent_it_pushes_not_only_the_changed_ones(env, monkeypatch):
+    monkeypatch.delenv("NEXARA_RUN_GENERATED_CODE", raising=False)
+    _, aid, cid = env.mk(spec=code_spec())
+    assert env.deliver_raw(aid, unverified_code_ack=True).status_code == 201
+    r = env.sync_raw(cid, {"confirm": True})                       # nothing changed, but the push would still carry unverified code
+    assert r.status_code == 409 and "unverified_code_ack" in r.json()["detail"]

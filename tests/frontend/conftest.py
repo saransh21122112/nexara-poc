@@ -13,12 +13,14 @@ import pytest
 pytest.importorskip("playwright")
 ROOT = Path(__file__).resolve().parents[2]
 PASSWORD = "ui-test-password"
+UI_DB = {}      # path of the throwaway database, so tests can seed rows the UI has no form for
 
 
 @pytest.fixture(scope="session")
 def site(tmp_path_factory):
     s = socket.socket(); s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]; s.close()
-    env = {**os.environ, "NEXARA_DB": str(tmp_path_factory.mktemp("ui") / "ui.db"), "FACTORY_PASSWORD": PASSWORD, "AI_PROVIDER": "anthropic",
+    UI_DB["path"] = str(tmp_path_factory.mktemp("ui") / "ui.db")
+    env = {**os.environ, "NEXARA_DB": UI_DB["path"], "FACTORY_PASSWORD": PASSWORD, "AI_PROVIDER": "anthropic",
            "CONTACT_MIN_SECONDS": "0", "REQUIRE_EMAIL_VERIFICATION": "false", "LEGAL_NAME": "Nexara AI",
            "POLICY_REVIEWED": "true"}
     for k in ("DATABASE_URL", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"):

@@ -75,7 +75,8 @@ function showSpec(a){const el=$("#spec");if(!a){el.innerHTML="";return}const s=a
  <label>Output schema (JSON)</label><textarea class="code" id="f_output_schema">${esc(J(s.output_schema))}</textarea>
  <label>Test scenarios (JSON: name, task, expected_behavior, must_contain[], must_call_tool)</label><textarea class="code" id="f_test_scenarios" style="min-height:200px">${esc(J(s.test_scenarios))}</textarea>
  <div id="serr"></div><div class="row" style="margin-top:16px"><button class="btn" id="save">Save Changes</button><button class="btn" id="dlv">Deliver to customer repo</button><button class="btn sec" id="pg">Open in Playground</button><span id="sok" class="muted"></span></div>
- <p class="muted" style="font-size:12px">Delivery creates a private GitHub repo for this customer (or adds to their existing one). Nothing happens until you confirm on the next screen.</p></div><div id="delivery"></div>`;
+ <p class="muted" style="font-size:12px">Delivery creates a private GitHub repo for this customer (or adds to their existing one). Nothing happens until you confirm on the next screen.</p></div><div id="artifact"></div><div id="delivery"></div>`;
+ showArtifact(a);
  $("#save").onclick=async()=>{$("#serr").innerHTML="";$("#sok").textContent="";const g=k=>$("#f_"+k).value,ls=k=>g(k).split("\n").map(x=>x.trim()).filter(Boolean);
   try{const spec={agent_name:g("agent_name"),purpose:g("purpose"),business_problem:g("business_problem"),instructions:g("instructions"),capabilities:ls("capabilities"),
    input_schema:JSON.parse(g("input_schema")),output_schema:JSON.parse(g("output_schema")),required_tools:ls("required_tools"),data_sources:ls("data_sources"),
@@ -83,7 +84,33 @@ function showSpec(a){const el=$("#spec");if(!a){el.innerHTML="";return}const s=a
    await api("/agents/"+a.id,{method:"PUT",body:JSON.stringify(spec)});$("#sok").textContent="Saved ✓"}catch(e){$("#serr").innerHTML=`<div class="bad">${e instanceof SyntaxError?"Invalid JSON: ":""}${esc(e.message)}</div>`}};
  $("#pg").onclick=()=>go("playground");
  $("#dlv").onclick=()=>showDelivery(a);
+ a11y(el);
 }
+
+// ---------- artifact: the real files, and whether the code in them has been run and checked ----------
+const CHECK_GROUPS={static:"Static code gate",plugin:"Claude Code plugin validation",code:"Run in the sandbox"};
+async function showArtifact(a){const box=$("#artifact");if(!box)return;
+ let d;try{d=await api(`/agents/${a.id}/artifact`)}catch(e){box.innerHTML="";return}
+ if(!d.structured){box.innerHTML="";return}
+ const draw=d=>{const c=d.checks,has=d.files.some(f=>/^(tools|servers)\//.test(f.path)&&/\.py$/.test(f.path));
+  const badge=!has?'<span class="tag">no code to run</span>':c&&c.verified?'<span class="tag ok">verified: code ran and passed</span>':c&&c.checks&&c.checks.some(x=>x.ok===false)?'<span class="tag fail">checks failed</span>':'<span class="tag fail">not verified</span>';
+  const groups=c?Object.keys(CHECK_GROUPS).map(g=>({g,items:c.checks.filter(x=>x.group===g)})).filter(x=>x.items.length):[];
+  box.innerHTML=`<div class="panel"><div class="row" style="justify-content:space-between"><h3>Artifact ${badge}</h3><span class="muted">${d.files.length} files</span></div>
+   <p class="muted">The files this request becomes. Read the code before you deliver it. Code is only run in a locked-down sandbox, and only when this host allows it.</p>
+   ${!d.run_enabled?'<div class="warn">Running generated code is switched off on this host (NEXARA_RUN_GENERATED_CODE is not set), so the code cannot be marked verified here. The other checks still work.</div>':""}
+   ${c&&c.reason&&!c.verified?`<div class="warn">${esc(c.reason)}</div>`:""}
+   <div class="row" style="margin:8px 0"><button class="btn sm" id="rchk">Run checks</button><span id="rmsg" class="muted"></span></div>
+   ${groups.map(x=>`<details ${x.items.some(i=>i.ok===false)?"open":""}><summary>${esc(CHECK_GROUPS[x.g])}: ${x.items.filter(i=>i.ok).length} of ${x.items.length} passed</summary><ul class="steps2">${x.items.map(i=>`<li><span class="tag ${i.ok===false?"fail":i.ok?"ok":""}">${i.ok===false?"fail":i.ok?"pass":"skipped"}</span> ${esc(i.name)}${i.ok!==true&&i.detail?` <small class="muted">${esc(i.detail)}</small>`:""}</li>`).join("")}</ul></details>`).join("")}
+   <div class="split art"><div class="tree" role="group" aria-label="Artifact files">${d.files.map((f,i)=>`<button type="button" class="ft" data-i="${i}"><code>${esc(f.path)}</code><small class="muted">${f.kind==="vetted"?"vetted block":f.bytes+" B"}</small></button>`).join("")}</div>
+   <div class="viewer"><div class="row"><b id="vname" class="mono">Select a file</b><button class="btn sm sec" id="vcopy" hidden>Copy</button></div><pre id="vcode" tabindex="0" aria-label="File contents"></pre></div></div></div>`;
+  const show=i=>{const f=d.files[i];$("#vname").textContent=f.path;$("#vcode").textContent=f.content===null?"This file is a vetted Nexara building block, copied unchanged into every deliverable that needs it. It is not model-written.":f.content;$("#vcopy").hidden=f.content===null;
+   box.querySelectorAll(".ft").forEach(b=>b.classList.toggle("sel",+b.dataset.i===i))};
+  box.querySelectorAll(".ft").forEach(b=>b.onclick=()=>show(+b.dataset.i));
+  $("#vcopy").onclick=()=>{const t=$("#vcode").textContent;navigator.clipboard.writeText(t).then(()=>$("#rmsg").textContent="Copied",()=>$("#rmsg").textContent="Copy failed - select the text manually")};
+  $("#rchk").onclick=async()=>{$("#rchk").disabled=true;$("#rmsg").textContent="Running checks...";
+   try{await api(`/agents/${a.id}/run-checks`,{method:"POST"});draw(await api(`/agents/${a.id}/artifact`))}catch(e){$("#rmsg").textContent=e.message;$("#rchk").disabled=false}};
+  const first=d.files.findIndex(f=>/\.py$/.test(f.path)&&f.content!==null);if(first>=0)show(first)};
+ draw(d)}
 
 // ---------- delivery: preview -> explicit confirm -> private GitHub repo ----------
 const ghNote=()=>fetch("/api/health").then(r=>r.json()).then(h=>h.github_configured);
@@ -104,8 +131,8 @@ async function showDelivery(a){const box=$("#delivery");box.innerHTML='<div clas
    <button class="btn" id="go1">${p.mode==="create"?"Create repo and deliver":"Add to repo"}</button>`}<button class="btn sec" id="cp">Copy onboarding message</button><span id="dmsg" class="muted"></span></div><div id="dres"></div></div>`;
  $("#cp").onclick=()=>navigator.clipboard.writeText($("#ob").value).then(()=>$("#dmsg").textContent="Copied",()=>$("#dmsg").textContent="Copy failed - select the text manually");
  if(!$("#go1"))return;if(p.blocked.length){$("#go1").disabled=true;$("#go1").title=p.blocked[0]}
- $("#go1").onclick=()=>confirmBar($("#dres"),`${p.mode==="add"?`This adds to the EXISTING repository of ${p.customer.company_name}, based on a request from ${p.request.contact_email}${p.request.github_username?" (@"+p.request.github_username+")":""}. Only continue if you have checked it really comes from this customer. `:""}This will ${p.mode==="create"?`create the PRIVATE repository ${p.repo.owner}/${p.repo.name}`:`push a new commit to ${p.repo.owner}/${p.repo.name}`}${$("#inv")&&$("#inv").checked?` and email a GitHub invitation to @${p.invite.username}`:""}.`,"Yes, do it",async()=>{
-  $("#go1").disabled=true;try{const r=await api(`/agents/${a.id}/deliver`,{method:"POST",body:JSON.stringify({confirm:true,invite:!!($("#inv")&&$("#inv").checked),existing_repo_ack:p.mode==="add"})});
+ $("#go1").onclick=()=>confirmBar($("#dres"),`${p.mode==="add"?`This adds to the EXISTING repository of ${p.customer.company_name}, based on a request from ${p.request.contact_email}${p.request.github_username?" (@"+p.request.github_username+")":""}. Only continue if you have checked it really comes from this customer. `:""}This will ${p.mode==="create"?`create the PRIVATE repository ${p.repo.owner}/${p.repo.name}`:`push a new commit to ${p.repo.owner}/${p.repo.name}`}${p.code&&p.code.has_code&&!p.code.verified?" It contains code that has NOT been run and checked here: only continue if a person has read it.":""}${$("#inv")&&$("#inv").checked?` and email a GitHub invitation to @${p.invite.username}`:""}.`,"Yes, do it",async()=>{
+  $("#go1").disabled=true;try{const r=await api(`/agents/${a.id}/deliver`,{method:"POST",body:JSON.stringify({confirm:true,invite:!!($("#inv")&&$("#inv").checked),existing_repo_ack:p.mode==="add",unverified_code_ack:!!(p.code&&p.code.has_code&&!p.code.verified)})});
    $("#dres").innerHTML=`<div class="ok-box"><b>${r.status==="pushed"?"Delivered":r.status==="proposed"?"Proposed as a pull request":"Already up to date"}.</b>${r.pull_request?` <a href="${esc(r.pull_request.url)}" target="_blank" rel="noopener">PR #${r.pull_request.number}</a> (not merged)`:""} <a href="${esc(r.repo.url)}" target="_blank" rel="noopener">${esc(r.repo.owner)}/${esc(r.repo.name)}</a> · commit ${esc(r.commit.slice(0,7))} · ${r.changed.length} files
     ${r.invite?`<br>Invite: ${esc(r.invite.status)}${r.invite.error?" - "+esc(r.invite.error):""}`:"<br>No invitation sent."}
     <div class="row" style="margin-top:8px"><button class="btn" id="tocust">Open customer page</button></div></div>`;
@@ -143,7 +170,9 @@ async function customerDetail(id,live){const d=await api(`/customers/${id}`);con
  $("#na").onclick=async()=>{const t=$("#nt").value.trim();if(!t)return;try{await api(`/customers/${id}/notes`,{method:"POST",body:JSON.stringify({text:t})});redo(live)}catch(e){$("#nt").value=e.message}};
  if(!r)return;
  $("#rf").onclick=async()=>{msg("Asking GitHub...");try{redo(await api(`/customers/${id}/refresh`,{method:"POST"}))}catch(e){msg(e.message)}};
- $("#zp").onclick=async()=>{try{const blob=await api(`/customers/${id}/plugin-zip`,{blob:true});const u=URL.createObjectURL(blob),l=document.createElement("a");l.href=u;l.download=`${(d.agents[0]&&d.agents[0].command||"plugin").split(":")[0].replace("/","")}.zip`;l.click();URL.revokeObjectURL(u);msg("Zip downloaded (a fallback: it does not update itself)")}catch(e){msg(e.message)}};
+ const zip=async(ack)=>{try{const blob=await api(`/customers/${id}/plugin-zip${ack?"?unverified_code_ack=true":""}`,{blob:true});const u=URL.createObjectURL(blob),l=document.createElement("a");l.href=u;l.download=`${(d.agents[0]&&d.agents[0].command||"plugin").split(":")[0].replace("/","")}.zip`;l.click();URL.revokeObjectURL(u);msg("Zip downloaded (a fallback: it does not update itself)")}
+  catch(e){if(e.status===409&&/unverified_code_ack/.test(e.message))confirmBar($("#cact"),e.message.split(". Run the checks")[0]+". Only continue if a person has read the code.","Download anyway",()=>zip(true));else msg(e.message)}};
+ $("#zp").onclick=()=>zip(false);
  $("#ri").onclick=()=>confirmBar($("#cact"),`GitHub will email a NEW invitation to @${r.invited_user||c.github_username||"?"}.`,"Send invite",async()=>{try{await api(`/customers/${id}/reinvite`,{method:"POST",body:JSON.stringify({confirm:true})});redo(live)}catch(e){msg(e.message)}});
  $("#ac").onclick=()=>{$("#cact").innerHTML=`<div class="row" style="margin-top:12px"><input id="au" placeholder="GitHub username" style="max-width:240px"><button class="btn sec" id="au_go">Review invite</button></div>`;
   $("#au_go").onclick=()=>{const u=$("#au").value.trim().replace(/^@/,"");if(!u)return;confirmBar($("#cact"),`GitHub will email an invitation to @${u}. They get WRITE access to this customer's private repo.`,"Invite",async()=>{try{await api(`/customers/${id}/collaborators`,{method:"POST",body:JSON.stringify({username:u,confirm:true})});redo(live)}catch(e){msg(e.message)}})}};

@@ -132,3 +132,11 @@ html.fac{scrollbar-width:none;-ms-overflow-style:none}html.fac::-webkit-scrollba
 #app label.case{text-transform:none;letter-spacing:0;font-size:14px;font-weight:400;color:var(--text);margin:8px 0 0}
 #app label.case small{font-size:13px;font-weight:400}
 .logo b{background:none;-webkit-background-clip:border-box;background-clip:border-box;color:var(--g2)}
+
+/* ---- artifact panel: file tree + read-only code viewer */
+.art{display:grid;grid-template-columns:minmax(180px,280px) 1fr;gap:14px;margin-top:12px;align-items:start}
+.art .tree{display:flex;flex-direction:column;gap:2px;max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:var(--r-sm);padding:6px;background:var(--well)}
+.art .ft{display:flex;justify-content:space-between;gap:8px;text-align:left;min-height:36px;padding:6px 10px;border:0;border-radius:8px;background:transparent;color:var(--text);cursor:pointer;font:inherit}
+.art .ft code{overflow-wrap:anywhere;font-size:12.5px}.art .ft:hover{background:var(--gsoft)}.art .ft.sel{background:var(--msoft);box-shadow:inset 3px 0 0 var(--m1)}
+.art .viewer{min-width:0}.art pre{margin:8px 0 0;max-height:460px;overflow:auto;white-space:pre;border:1px solid var(--line);border-radius:var(--r-sm);padding:12px;background:#fff;font-size:12.5px;line-height:1.5;tab-size:4}
+@media(max-width:760px){.art{grid-template-columns:1fr}}

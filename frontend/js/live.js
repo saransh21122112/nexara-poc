@@ -62,7 +62,7 @@ async function live(v){
      <p class="muted" style="margin:10px 0 4px">Tools: ${(d.tools||[]).length?esc(d.tools.join(", ")):"none (read-only)"} · model ${esc(d.model||"")}</p><p class="muted" style="margin:8px 0 4px">Safety limits</p><ul class="steps2">${(d.safety||[]).map((x,i)=>`<li style="--i:${i}">${ico("shield")}${esc(x)}</li>`).join("")}</ul></div>`;
   }else if(k==="test"){
    const total=(b.stages.test.detail||{}).total||s.progress.length;
-   body=`<div class="tests">${s.progress.map((p,i)=>`<div class="trow ${p.detail.passed?"ok":"no"}" style="--i:${i}"><span class="tag ${p.detail.passed?"ok":"fail"}">${p.detail.passed?"pass":"fail"}</span><b>${esc(p.detail.name)}</b><small class="muted">${p.detail.ms!=null?(p.detail.ms/1000).toFixed(1)+"s":""} · ${esc(p.detail.reason)}</small></div>`).join("")}
+   body=`<div class="tests">${s.progress.map((p,i)=>`<div class="trow ${p.detail.passed?"ok":"no"}" style="--i:${i}"><span class="tag ${p.detail.skipped?"":p.detail.passed?"ok":"fail"}">${p.detail.skipped?"not run":p.detail.passed?"pass":"fail"}</span><b>${esc(p.detail.name)}</b><small class="muted">${p.detail.ms!=null?(p.detail.ms/1000).toFixed(1)+"s":""} · ${esc(p.detail.reason)}</small></div>`).join("")}
     ${s.state==="running"?Array.from({length:Math.max(0,total-s.progress.length)},(_,i)=>`<div class="trow wait"><span class="tag">${i?"queued":"running"}</span><div class="shimmer slim"></div></div>`).join(""):""}</div>`;
   }else if(k==="package"){
    if(s.state==="running")body='<div class="shimmer"></div>';

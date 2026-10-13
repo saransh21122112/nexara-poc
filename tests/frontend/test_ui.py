@@ -120,3 +120,40 @@ def test_wrong_factory_password_is_refused_without_a_token(page, site):
     page.fill("#pw", "wrong"); page.press("#pw", "Enter")
     page.wait_for_selector("#lerr:not([hidden])")
     assert page.is_hidden("#app") and page.evaluate("sessionStorage.getItem('ft')") is None
+
+
+@pytest.mark.parametrize("width", [390, 1280])
+def test_artifact_panel_shows_files_code_checks_and_stays_accessible(page, site, width):
+    import json
+    import sqlite3
+
+    from axe_playwright_python.sync_playwright import Axe
+
+    from backend.models import AgentSpec
+    from tests.artifacts import golden
+    from .conftest import UI_DB
+    rid = page.request.post(site + "/api/requests", data={"company_name": "Panel Co", "industry": "Testing", "contact_email": "panel@example.com", "agent_type": "Tool",
+                                                           "business_problem": "Spreadsheets need checking.", "tasks": "Check CSV files.", "existing_tools": "Excel",
+                                                           "required_output": "A list of problems.", "github_username": "panel-dev", "claude_status": "have_claude_account"}).json()["request_id"]
+    con = sqlite3.connect(UI_DB["path"])
+    con.execute("INSERT INTO agents (id, request_id, created_at, updated_at, provider, model, spec) VALUES (?,?,?,?,?,?,?)",
+                (f"AGT-PANEL{width}", rid, "2026-01-01", "2026-01-01", "anthropic", "fake", json.dumps(AgentSpec(**golden.tool_only()).model_dump())))
+    con.commit(); con.close()
+    open_page(page, site, "/factory", width)
+    page.fill("#pw", PASSWORD); page.press("#pw", "Enter")
+    page.wait_for_selector("#app:not([hidden])")
+    page.click("button.nav[data-v=builder]"); page.wait_for_selector("#ag")
+    page.select_option("#ag", f"AGT-PANEL{width}")
+    page.wait_for_selector("#artifact .ft")
+    assert "not verified" in page.inner_text("#artifact h3")
+    assert "NEXARA_RUN_GENERATED_CODE" in page.inner_text("#artifact .warn")
+    assert "def handle(args):" in page.inner_text("#vcode") and page.inner_text("#vname").endswith(".py")
+    page.click("#artifact .ft:has-text('lib/nx_cli.py')")
+    assert "vetted Nexara building block" in page.inner_text("#vcode")
+    page.click("#rchk"); page.wait_for_selector("#artifact details")
+    assert page.evaluate("innerWidth - document.documentElement.clientWidth") == 0
+    r = page.evaluate(AUDIT)
+    assert r["over"] <= 0 and r["off"] == [], r
+    res = Axe().run(page, options={"runOnly": ["wcag2a", "wcag2aa", "wcag21aa", "best-practice"]})
+    assert res.violations_count == 0, res.generate_report()
+    assert page.errors == [], page.errors

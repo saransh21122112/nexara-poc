@@ -29,13 +29,15 @@ function wireChanges(el,d,id,r,msg,redo,live){
  $("#rv").onclick=async()=>{out.innerHTML='<div class="sk big"></div>';
   try{const x=await api(`/customers/${id}/diff`);out.innerHTML=(x.conflicts.length?`<div class="warn"><b>Hand edits in the repo</b> will block the proposal unless you choose to overwrite them:<pre>${esc(x.conflicts.map(c=>c.path+": "+c.why).join("\n"))}</pre></div>`:"")+(x.files.length?x.files.map(fileDiffHtml).join(""):'<p class="muted">No file changes.</p>')}
   catch(e){out.innerHTML=`<div class="bad">${esc(e.message)}</div>`}};
- const go=async(o)=>{try{const x=await api(`/customers/${id}/sync`,{method:"POST",body:JSON.stringify({confirm:true,overwrite_conflicts:!!o.conflicts,overwrite_dev:!!o.dev})});
+ const go=async(o)=>{try{const x=await api(`/customers/${id}/sync`,{method:"POST",body:JSON.stringify({confirm:true,overwrite_conflicts:!!o.conflicts,overwrite_dev:!!o.dev,unverified_code_ack:!!o.code})});
    msg(x.status==="proposed"?`Pull request #${x.pull_request.number} is ready for review on GitHub.`:"Already up to date");redo(live)}
   catch(e){const b=e.body||{};
    if(e.status===409&&b.conflicts){$("#cact").innerHTML=`<div class="warn" style="margin-top:12px"><b>Files in the repo were changed by hand.</b> Nothing was proposed.<pre>${esc(b.conflicts.map(x=>x.path+": "+x.why).join("\n"))}</pre><div class="row"><button class="btn sec" id="ovn">Cancel</button><button class="btn" id="ov">Overwrite them in the proposal</button></div></div>`;
     $("#ovn").onclick=()=>$("#cact").innerHTML="";$("#ov").onclick=()=>confirmBar($("#cact"),"Replace the hand-edited files with Nexara's version in the proposed update (you still review the pull request).","Overwrite",()=>go({...o,conflicts:true}))}
    else if(e.status===409&&/'dev' branch/.test(e.message)){$("#cact").innerHTML=`<div class="warn" style="margin-top:12px"><b>${esc(e.message)}</b><div class="row"><button class="btn sec" id="dn">Cancel</button><button class="btn" id="dy">Replace dev</button></div></div>`;
     $("#dn").onclick=()=>$("#cact").innerHTML="";$("#dy").onclick=()=>confirmBar($("#cact"),"This replaces the other commits on the repo's dev branch with Nexara's update.","Replace dev",()=>go({...o,dev:true}))}
+   else if(e.status===409&&/unverified_code_ack/.test(e.message)){$("#cact").innerHTML=`<div class="warn" style="margin-top:12px"><b>${esc(e.message)}</b><div class="row"><button class="btn sec" id="un">Cancel</button><button class="btn" id="uy">I reviewed the code</button></div></div>`;
+    $("#un").onclick=()=>$("#cact").innerHTML="";$("#uy").onclick=()=>confirmBar($("#cact"),"Propose code that has not been run and checked on this host. You still review the pull request.","Propose anyway",()=>go({...o,code:true}))}
    else msg(e.message)}};
  $("#pr").onclick=()=>confirmBar($("#cact"),`Put the latest ${d.agents.filter(a=>a.behind).map(a=>a.agent_name).join(", ")} on branch dev of ${r.owner}/${r.name} and open a pull request into main. Nothing is merged.`,"Open pull request",()=>go({}));
  el.querySelectorAll("[data-rev]").forEach(b=>b.onclick=()=>revisePanel(d.agents.find(a=>a.agent_id===b.dataset.rev),$("#revhost"),()=>redo(live)))}
