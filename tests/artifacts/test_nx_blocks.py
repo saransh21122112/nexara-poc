@@ -299,3 +299,23 @@ def test_db_introspection_lists_every_real_column_including_unreadable_ones(tmp_
     with pytest.raises(nx_db.DbError):
         db.columns("bookings; DROP TABLE bookings")                         # table names are validated, never concatenated blindly
     assert db.columns("no_such_table") == []
+
+
+def test_cli_text_file_arrives_as_text_alongside_json_options(tmp_path):
+    f = tmp_path / "data.csv"
+    f.write_text("a,b\n1,2\n", encoding="utf-8")
+    out = io.StringIO()
+    code = nx_cli.main(lambda a: {"n": len(a["text"].splitlines()), "d": a.get("delimiter")}, argv=["--text-file", str(f), "--json", '{"delimiter": ","}'], stdin=io.StringIO(""), stdout=out)
+    assert code == 0 and json.loads(out.getvalue()) == {"ok": True, "result": {"n": 2, "d": ","}}
+    out = io.StringIO()
+    assert nx_cli.main(lambda a: len(a["text"]), argv=["--text-file", str(f)], stdin=io.StringIO(""), stdout=out) == 0
+
+
+def test_cli_text_file_missing_or_huge_is_a_clean_user_error(tmp_path, monkeypatch):
+    out = io.StringIO()
+    assert nx_cli.main(lambda a: 1, argv=["--text-file", str(tmp_path / "nope")], stdin=io.StringIO(""), stdout=out) == 2
+    big = tmp_path / "big.txt"
+    big.write_text("x" * 100)
+    monkeypatch.setattr(nx_cli, "MAX_TEXT", 10)
+    out = io.StringIO()
+    assert nx_cli.main(lambda a: 1, argv=["--text-file", str(big)], stdin=io.StringIO(""), stdout=out) == 2 and "larger" in out.getvalue()

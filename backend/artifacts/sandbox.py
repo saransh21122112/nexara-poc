@@ -74,6 +74,7 @@ def _mac_profile(cwd: Path) -> str:
             f"(allow process-exec {' '.join(f'(literal \"{q(e)}\")' for e in sorted(exe))} {sub(py)})\n"
             "(allow file-read-metadata)\n(allow signal (target self))\n(allow sysctl-read)\n(allow mach-lookup)\n(allow ipc-posix-shm-read-data)\n"
             '(allow file-read* (subpath "/usr/lib") (subpath "/System") (subpath "/Library/Preferences/Logging") (subpath "/private/var/db/timezone") (subpath "/usr/share")\n'
+            '  (subpath "/opt/homebrew/lib") (subpath "/opt/homebrew/opt") (subpath "/opt/homebrew/Cellar") (subpath "/usr/local/lib") (subpath "/usr/local/opt") (subpath "/usr/local/Cellar") (subpath "/Library/Frameworks")\n'
             '  (subpath "/dev") (literal "/") (literal "/private") (literal "/private/var") (literal "/var") (literal "/Users") (literal "/Library"))\n'
             f"(allow file-read* {sub(reads)})\n"
             f"(allow file-write* {sub(sorted({str(cwd), str(Path(os.path.realpath(cwd)))}))} (literal \"/dev/null\"))\n"

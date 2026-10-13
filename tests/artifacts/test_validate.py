@@ -249,3 +249,22 @@ def test_fixture_env_may_carry_plain_data():
 ])
 def test_string_evaluating_and_reflection_helpers_are_rejected(src):
     assert problems(src)
+
+
+def _base_spec(uses):
+    return {"scripts": [{"name": "csv-check", "description": "d", "handler_source": "def handle(args):\n    return 1", "examples": [{"args": {}, "expect_contains": ["1"]}]}],
+            "mcp_servers": [{"name": "kb", "description": "d", "tools": [{"name": "search", "description": "d", "input_schema": {"type": "object", "properties": {}},
+                                                                            "handler_source": "def handle(args, ctx):\n    return 1", "examples": [{"args": {}, "expect_contains": ["1"]}]}]}],
+            "skills": [{"name": "s", "description": "d", "body": "b", "uses": uses}]}
+
+
+@pytest.mark.parametrize("uses", [["csv-check"], ["kb"], ["kb/search"], ["csv-check", "kb/search"]])
+def test_skill_uses_that_point_at_real_components_are_accepted(uses):
+    from backend.artifacts.validate import check_spec
+    assert check_spec(_base_spec(uses)) == []
+
+
+@pytest.mark.parametrize("uses", [["nope"], ["kb/nope"], ["nope/search"], ["../x"], ["kb/search/extra"]])
+def test_skill_uses_that_point_nowhere_are_rejected(uses):
+    from backend.artifacts.validate import check_spec
+    assert any("uses" in p for p in check_spec(_base_spec(uses)))

@@ -322,6 +322,12 @@ def check_spec(spec):
         for r in s.get("references") or []:
             if not (isinstance(r.get("name"), str) and REF.fullmatch(r["name"])) or not _is_text(r.get("content")) or len(r["content"]) > 30_000:
                 probs.append(f"{w}: invalid reference (name like 'rules', content up to 30 KB)")
+    known = {s.get("name") for s in spec.get("scripts") or []} | {s.get("name") for s in spec.get("mcp_servers") or []}
+    known |= {f"{s.get('name')}/{t.get('name')}" for s in spec.get("mcp_servers") or [] for t in s.get("tools") or []}
+    for s in spec.get("skills") or []:
+        for u in s.get("uses") or []:
+            if u not in known:
+                probs.append(f"skill '{s.get('name')}': uses '{str(u)[:40]}' is not a script, server or server/tool in this artifact")
     for s in spec.get("subagents") or []:
         n = s.get("name", "")
         w = f"subagent '{n}'"
